@@ -1,0 +1,6 @@
+apps:
+  - name: textus-supervisor
+    path: /web/textus-supervisor
+    kind: static-form
+    root: /web/textus-supervisor
+    route: /web/{component}/textus-supervisor

@@ -1,0 +1,18 @@
+expose:
+  textus-supervisor.lifecycle-supervisor.submit-lifecycle-request: protected
+  textus-supervisor.lifecycle-supervisor.get-lifecycle-request: public
+form:
+  textus-supervisor.lifecycle-supervisor.submit-lifecycle-request:
+    enabled: true
+    successRedirect: /web/${component}/admin/entities/lifecycle-request/${result.id}
+    stayOnError: true
+    controls:
+      description:
+        type: textarea
+  textus-supervisor.lifecycle-supervisor.get-lifecycle-request:
+    enabled: true
+    successRedirect: /web/${component}/admin/entities/lifecycle-request
+    stayOnError: true
+admin:
+  entity.lifecycle-request:
+    totalCount: optional

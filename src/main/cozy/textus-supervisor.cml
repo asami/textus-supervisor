@@ -1,0 +1,139 @@
+# COMPONENT
+
+## TextusSupervisor
+
+### PACKAGE
+
+org.simplemodeling.textus.supervisor
+
+### DESCRIPTION
+
+Lifecycle authority component for managed Textus deployments. The Supervisor
+Service is the executable component boundary and also provides the CNCF
+standard `Supervisor` SPI.
+
+### SERVICE
+
+#### Supervisor
+
+- spi-standard :: cncf.supervisor
+- spi-direction :: provides
+- spi-socket :: false
+
+# SERVICE
+
+## Supervisor
+
+### DESCRIPTION
+
+Protected lifecycle command and lookup operations. The CNCF Supervisor SPI
+provider delegates to this Service so local and remote placements share the
+same executable semantics.
+
+### OPERATION
+
+#### submit
+
+- type :: COMMAND
+- input :: SupervisorRequest
+- output :: SupervisorResult
+
+##### DESCRIPTION
+
+Submits one idempotent lifecycle request to the Supervisor Service. The request
+contains no process identifier, shell command, filesystem locator, or
+credential.
+
+##### VISIBILITY
+
+protected
+
+#### lookup
+
+- type :: QUERY
+- input :: SupervisorLookup
+- output :: SupervisorLookupResult
+
+##### DESCRIPTION
+
+Looks up the durable result for one Supervisor request ID without creating or
+controlling a deployment.
+
+##### VISIBILITY
+
+protected
+
+# VALUE
+
+## SupervisorRequest
+
+- input-kind :: COMMAND
+
+### DESCRIPTION
+
+Component operation projection of the CNCF Supervisor request contract.
+
+### ATTRIBUTE
+
+| name              | type    | multiplicity |
+|-------------------+---------+--------------|
+| requestId         | string  | 1            |
+| idempotencyKey    | string  | 1            |
+| targetId          | string  | 1            |
+| deploymentId      | string  | ?            |
+| action            | string  | 1            |
+| operatorSubjectId | string  | 1            |
+| deadlineAt        | instant | 1            |
+
+## SupervisorResult
+
+### EXTENDS
+
+OperationResult
+
+### DESCRIPTION
+
+Component operation projection of the CNCF Supervisor result contract.
+
+### ATTRIBUTE
+
+| name           | type    | multiplicity |
+|----------------+---------+--------------|
+| requestId      | string  | 1            |
+| state          | string  | 1            |
+| diagnosticCode | string  | ?            |
+| diagnostic     | string  | ?            |
+| supervisorId   | string  | 1            |
+| instanceId     | string  | ?            |
+| acceptedAt     | instant | ?            |
+| completedAt    | instant | ?            |
+
+## SupervisorLookup
+
+- input-kind :: QUERY
+
+### DESCRIPTION
+
+Request to look up one durable Supervisor request.
+
+### ATTRIBUTE
+
+| name      | type   | multiplicity |
+|-----------+--------+--------------|
+| requestId | string | 1            |
+
+## SupervisorLookupResult
+
+### EXTENDS
+
+OperationResult
+
+### DESCRIPTION
+
+Lookup result. `result` is absent when the durable request is unknown.
+
+### ATTRIBUTE
+
+| name   | type             | multiplicity |
+|--------+------------------+--------------|
+| result | SupervisorResult | ?            |
