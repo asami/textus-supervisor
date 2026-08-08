@@ -1,18 +1,20 @@
 import org.goldenport.cozy.CozyPlugin.autoImport._
+import org.goldenport.cozy.CozyProjectIdentityEvidence
 import sbt.Keys.*
 
-val scala3Version = "3.3.8"
-val cncfVersion = "0.5.1"
+lazy val projectIdentityEvidence = settingKey[CozyProjectIdentityEvidence]("Admitted project.yaml component identity evidence")
 
 lazy val root = project
   .in(file("."))
   .enablePlugins(org.goldenport.cozy.CozyPlugin)
   .settings(
-    organization := "org.textus",
-    name := "textus-supervisor",
-    version := "0.1.0-SNAPSHOT",
+    projectIdentityEvidence := SupervisorProjectYamlBuild.admitted(cozyProjectMetadata.value, scalaBinaryVersion.value),
+    organization := SupervisorProjectYamlBuild.organization(projectIdentityEvidence.value),
+    moduleName := SupervisorProjectYamlBuild.moduleName(projectIdentityEvidence.value),
+    name := moduleName.value,
+    version := SupervisorProjectYamlBuild.version(projectIdentityEvidence.value),
 
-    scalaVersion := scala3Version,
+    scalaVersion := SupervisorProjectYamlBuild.requiredValue(cozyProjectMetadata.value, "build.scalaVersion"),
     useCoursier := false,
 
     resolvers += Resolver.defaultLocal,
@@ -20,17 +22,15 @@ lazy val root = project
     resolvers += "Local Maven Repository" at ("file://" + Path.userHome.absolutePath + "/.m2/repository"),
     resolvers += "SimpleModeling.org" at "https://www.simplemodeling.org/repository/maven",
 
-    libraryDependencies += "org.goldenport" %% "goldenport-cncf" % cncfVersion,
-    libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.10" % Test,
+    libraryDependencies ++= SupervisorProjectYamlBuild.dependencies(cozyProjectMetadata.value),
 
     cozyGeneratorBackend := "cozy",
     cozyDelegateProjectDir := None,
     cozyDelegateCommand := Seq("cozy"),
-    cozyManifestMetadata ++= Map(
-      "component" -> "textus-supervisor",
-      "boundedContext" -> "subsystem-operation",
-      "domain" -> "system-administration"
-    ),
+    cozyCarName := SupervisorProjectYamlBuild.carBaseName(projectIdentityEvidence.value),
+    cozyManifestMetadata ++=
+      cozyProjectMetadata.value.mapUnder("packaging.car.manifest_metadata") ++
+        SupervisorProjectYamlBuild.manifestMetadata(projectIdentityEvidence.value),
     publish := {
       val _ = cozyPublishCar.value
       ()

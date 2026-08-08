@@ -1,0 +1,22 @@
+{
+  "format": "cozy.car.abi-manifest.v2",
+  "component": {
+    "namespace": "org.simplemodeling.textus",
+    "id": "Supervisor",
+    "version": "0.1.0-SNAPSHOT"
+  },
+  "abi": {
+    "version": 1,
+    "exports": {
+      "components": [
+        {
+          "namespace": "org.simplemodeling.textus",
+          "id": "Supervisor"
+        }
+      ],
+      "operations": [],
+      "entities": []
+    },
+    "dependencies": []
+  }
+}

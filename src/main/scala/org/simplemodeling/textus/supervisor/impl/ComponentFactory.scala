@@ -1,5 +1,6 @@
 /*
- * @version Jul. 28, 2026
+ *  version Jul. 28, 2026
+ * @version Aug.  8, 2026
  */
 package org.simplemodeling.textus.supervisor.impl
 
@@ -30,7 +31,7 @@ abstract class TextusSupervisorParticipantFactoryBase extends TextusSupervisorCo
     new DefaultSupervisorServiceFactory(() => _runtime.map(_.service))
 
   protected final def configure_runtime(params: ComponentCreate): TextusSupervisorProvider.Runtime = {
-    val runtime = TextusSupervisorProvider.configuredRuntime(params.subsystem.configuration)
+    val runtime = TextusSupervisorProvider.configuredRuntime(params.configuration)
     _runtime = Some(runtime)
     runtime
   }

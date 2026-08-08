@@ -1,5 +1,8 @@
 {
-  "name": "textus-supervisor",
-  "version": "0.1.0-SNAPSHOT",
-  "component": "textus-supervisor"
+  "schemaVersion": 3,
+  "component": {
+    "namespace": "org.simplemodeling.textus",
+    "id": "Supervisor",
+    "version": "0.1.0-SNAPSHOT"
+  }
 }
