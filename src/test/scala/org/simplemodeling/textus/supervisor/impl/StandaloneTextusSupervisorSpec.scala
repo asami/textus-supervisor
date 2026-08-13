@@ -1,7 +1,7 @@
 /*
  * @since   Jul. 28, 2026
  *  version Jul. 28, 2026
- * @version Aug. 10, 2026
+ * @version Aug. 14, 2026
  * @author  ASAMI, Tomoharu
  */
 package org.simplemodeling.textus.supervisor.impl
@@ -151,6 +151,7 @@ final class StandaloneTextusSupervisorSpec extends AnyWordSpec with Matchers wit
         Vector(airuntime, project).map(_.toAbsolutePath.normalize).sortBy(_.toString)
       StandaloneSupervisorProcessHost.System.command(host.profiles.head, "instance-1") shouldBe Vector(
         "cncf",
+        project.toAbsolutePath.normalize.toString,
         "server",
         "--textus.server.port=18011",
         "--textus.control-center.registration-instance-id=instance-1",
@@ -165,7 +166,8 @@ final class StandaloneTextusSupervisorSpec extends AnyWordSpec with Matchers wit
         Given("a child that remains alive but does not become ready during startup")
         val directory = _work_directory("startup-readiness-failure")
         val statepath = directory.resolve("supervisor-state.json")
-        val host = new StartupReadinessProcessHost
+        val diagnostic = "[component-dev-dir] development-side runtime evidence error: target/cncf.d/runtime-classpath.txt is unavailable"
+        val host = new StartupReadinessProcessHost(diagnostic)
         val supervisor = new StandaloneTextusSupervisor(statepath, host)
         supervisor.registerDevelopmentProfile(StandaloneDevelopmentLaunchProfile("textus-art-scene", directory, 18011))
         given ExecutionContext = ExecutionContext.create()
@@ -179,11 +181,33 @@ final class StandaloneTextusSupervisorSpec extends AnyWordSpec with Matchers wit
         Then("Control Center can retain the failed request while the released ownership permits a later start")
         failed.state shouldBe SupervisorState.Failed
         failed.diagnosticCode shouldBe Some(StandaloneSupervisorProcessHost.EXECUTION_UNAVAILABLE)
+        failed.diagnostic shouldBe Some(diagnostic)
         failed.instanceId should not be empty
         retained shouldBe Some(failed)
         retried.state shouldBe SupervisorState.Accepted
         host.starts shouldBe 2
         host.children.head.stops shouldBe 1
+      }
+
+      "capture real child stderr in a failed startup result" in {
+        Given("a Java child process that reports a known startup diagnostic and exits before readiness")
+        val directory = _work_directory("real-stderr-failure")
+        val port = _free_port()
+        val host = new StderrFailureProcessHost
+        val supervisor = new StandaloneTextusSupervisor(directory.resolve("supervisor-state.json"), host)
+        supervisor.registerDevelopmentProfile(StandaloneDevelopmentLaunchProfile("textus-art-scene", directory, port))
+        given ExecutionContext = ExecutionContext.create()
+
+        try {
+          When("the operator starts the component and the child fails readiness")
+          val failed = supervisor.submit(_request("request-real-stderr-failure", "real-stderr-failure-key", SupervisorAction.Start)).toOption.get
+
+          Then("the durable failed result contains the diagnostic captured from the child's stderr pipe")
+          failed.state shouldBe SupervisorState.Failed
+          failed.diagnostic shouldBe Some(StandaloneSupervisorProcessTreeFixture.STARTUP_FAILURE_DIAGNOSTIC)
+        } finally {
+          host.stop()
+        }
       }
 
       "use the canonical server command in the selected development directory" in {
@@ -197,11 +221,11 @@ final class StandaloneTextusSupervisorSpec extends AnyWordSpec with Matchers wit
         Then("the public cncf server form is preserved without a launcher supervisor command")
         command shouldBe Vector(
           "cncf",
+          directory.toAbsolutePath.normalize.toString,
           "server",
           "--textus.server.port=18011",
           "--textus.control-center.registration-instance-id=instance-1"
         )
-        command should not contain directory.toString
       }
 
       "remove launcher-private environment entries while preserving unrelated child settings" in {
@@ -378,6 +402,7 @@ final class StandaloneTextusSupervisorSpec extends AnyWordSpec with Matchers wit
       host.profiles.map(StandaloneSupervisorProcessHost.System.command(_, "instance-1")) shouldBe Vector(
         Vector(
           "cncf",
+          project.toAbsolutePath.normalize.toString,
           "server",
           "--textus.server.port=18011",
           "--textus.control-center.registration-instance-id=instance-1",
@@ -523,7 +548,7 @@ final class StandaloneTextusSupervisorSpec extends AnyWordSpec with Matchers wit
     finally socket.close()
   }
 
-  private def _process_tree_fixture(mode: String, port: Int): Process = {
+  private def _process_tree_fixture(mode: String, port: Int, capturestderr: Boolean = false): Process = {
     val javaexecutable = Path.of(java.lang.System.getProperty("java.home"), "bin", "java").toString
     val classpath = StandaloneSupervisorProcessTreeFixture.fixtureClasspath
     new ProcessBuilder(
@@ -533,7 +558,9 @@ final class StandaloneTextusSupervisorSpec extends AnyWordSpec with Matchers wit
       "org.simplemodeling.textus.supervisor.impl.StandaloneSupervisorProcessTreeFixture",
       mode,
       port.toString
-    ).redirectError(ProcessBuilder.Redirect.INHERIT).redirectOutput(ProcessBuilder.Redirect.INHERIT).start()
+    ).redirectError(if (capturestderr) ProcessBuilder.Redirect.PIPE else ProcessBuilder.Redirect.INHERIT)
+      .redirectOutput(ProcessBuilder.Redirect.INHERIT)
+      .start()
   }
 
   private def _await_condition(timeoutmillis: Long)(condition: => Boolean): Boolean = {
@@ -575,7 +602,8 @@ final class StandaloneTextusSupervisorSpec extends AnyWordSpec with Matchers wit
   private final class RecordingChild(
     val instanceId: String,
     val port: Option[Int],
-    startupready: Boolean = true
+    startupready: Boolean = true,
+    override val diagnostic: Option[String] = None
   ) extends StandaloneSupervisorChild {
     var alive = true
     var stops = 0
@@ -589,7 +617,7 @@ final class StandaloneTextusSupervisorSpec extends AnyWordSpec with Matchers wit
     }
   }
 
-  private final class StartupReadinessProcessHost extends StandaloneSupervisorProcessHost {
+  private final class StartupReadinessProcessHost(diagnostic: String) extends StandaloneSupervisorProcessHost {
     var starts = 0
     var children = Vector.empty[RecordingChild]
 
@@ -598,10 +626,31 @@ final class StandaloneTextusSupervisorSpec extends AnyWordSpec with Matchers wit
 
     def start(profile: StandaloneLaunchProfile, instanceId: String): Either[String, StandaloneSupervisorChild] = {
       starts += 1
-      val child = new RecordingChild(instanceId, profile.defaultPort, starts > 1)
+      val child = new RecordingChild(
+        instanceId,
+        profile.defaultPort,
+        starts > 1,
+        Option.when(starts == 1)(diagnostic)
+      )
       children = children :+ child
       Right(child)
     }
+  }
+
+  private final class StderrFailureProcessHost extends StandaloneSupervisorProcessHost {
+    private var _child: Option[StandaloneSupervisorChild] = None
+
+    def preflight(profile: StandaloneLaunchProfile, owned: Option[StandaloneSupervisorChild]): Either[String, Unit] =
+      Right(())
+
+    def start(profile: StandaloneLaunchProfile, instanceId: String): Either[String, StandaloneSupervisorChild] = {
+      val process = _process_tree_fixture("stderr-failure", profile.defaultPort.getOrElse(0), capturestderr = true)
+      val child = StandaloneSupervisorProcessHost.System._child(process, instanceId, profile.defaultPort)
+      _child = Some(child)
+      Right(child)
+    }
+
+    def stop(): Unit = _child.foreach(_.stop())
   }
 
   private final class UnavailablePreflightProcessHost extends StandaloneSupervisorProcessHost {
@@ -614,6 +663,8 @@ final class StandaloneTextusSupervisorSpec extends AnyWordSpec with Matchers wit
 }
 
 object StandaloneSupervisorProcessTreeFixture {
+  val STARTUP_FAILURE_DIAGNOSTIC = "[real-child] startup failed: development runtime is unavailable"
+
   def fixtureClasspath: String =
     Vector(
       StandaloneSupervisorProcessTreeFixture.getClass,
@@ -641,6 +692,9 @@ object StandaloneSupervisorProcessTreeFixture {
           }
         }
       } finally socket.close()
+    case Vector("stderr-failure", _) =>
+      java.lang.System.err.println(STARTUP_FAILURE_DIAGNOSTIC)
+      java.lang.System.err.flush()
     case _ => ()
   }
 

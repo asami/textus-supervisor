@@ -1,11 +1,12 @@
 /*
  * @since   Jul. 28, 2026
  *  version Jul. 28, 2026
- * @version Aug. 10, 2026
+ * @version Aug. 14, 2026
  * @author  ASAMI, Tomoharu
  */
 package org.simplemodeling.textus.supervisor.impl
 
+import java.io.ByteArrayOutputStream
 import java.net.{InetAddress, InetSocketAddress, ServerSocket}
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path, StandardCopyOption}
@@ -288,6 +289,7 @@ trait StandaloneSupervisorChild {
   def instanceId: String
   def port: Option[Int]
   def isAlive: Boolean
+  def diagnostic: Option[String] = None
   def awaitReadiness(): Boolean = isAlive
   def stop(): Boolean
 }
@@ -305,6 +307,8 @@ object StandaloneSupervisorProcessHost {
   private val _capture_poll_millis = 25L
   private val _shutdown_wait_millis = 5000L
   private val _shutdown_poll_millis = 50L
+  private val _diagnostic_drain_wait_millis = 1000L
+  private val MAXIMUM_DIAGNOSTIC_BYTES = 16 * 1024
 
   /** Standalone host process provider and process-ownership boundary. cncf-car-lint: ignore provider/bootstrap boundary. */
   object System extends StandaloneSupervisorProcessHost {
@@ -320,7 +324,7 @@ object StandaloneSupervisorProcessHost {
         val childinstanceid = instanceId
         val process = new ProcessBuilder(command(profile, instanceId)*)
           .redirectOutput(ProcessBuilder.Redirect.INHERIT)
-          .redirectError(ProcessBuilder.Redirect.INHERIT)
+          .redirectError(ProcessBuilder.Redirect.PIPE)
         profile.workingDirectory.foreach(directory => process.directory(directory.toFile))
         _sanitize_environment(process.environment())
         val started = process.start()
@@ -341,11 +345,18 @@ object StandaloneSupervisorProcessHost {
     ) extends StandaloneSupervisorChild {
       private val _root = process.toHandle
       private val _tracked = scala.collection.mutable.LinkedHashSet.empty[ProcessHandle]
+      private val _stderr = new ByteArrayOutputStream(MAXIMUM_DIAGNOSTIC_BYTES)
 
       _tracked += _root
       _refresh_descendants()
       private val _capture_thread = {
         val thread = new Thread(() => _capture_descendants(), "textus-supervisor-process-tree")
+        thread.setDaemon(true)
+        thread.start()
+        thread
+      }
+      private val _diagnostic_thread = {
+        val thread = new Thread(() => _capture_stderr(), "textus-supervisor-stderr")
         thread.setDaemon(true)
         thread.start()
         thread
@@ -361,6 +372,18 @@ object StandaloneSupervisorProcessHost {
           case Some(port) => _await_port_bound(this, port)
           case None => isAlive
         }
+
+      override def diagnostic: Option[String] = {
+        if (!_root.isAlive && _diagnostic_thread.isAlive && Thread.currentThread != _diagnostic_thread) {
+          try _diagnostic_thread.join(_diagnostic_drain_wait_millis)
+          catch {
+            case _: InterruptedException => Thread.currentThread.interrupt()
+          }
+        }
+        _stderr.synchronized {
+          Option(new String(_stderr.toByteArray, StandardCharsets.UTF_8).trim).filter(_.nonEmpty)
+        }
+      }
 
       def stop(): Boolean = {
         _refresh_descendants()
@@ -393,6 +416,26 @@ object StandaloneSupervisorProcessHost {
                 running = false
             }
           }
+        }
+      }
+
+      private def _capture_stderr(): Unit = {
+        val stream = process.getErrorStream
+        val buffer = new Array[Byte](1024)
+        try {
+          var read = stream.read(buffer)
+          while (read >= 0) {
+            _stderr.synchronized {
+              val remaining = MAXIMUM_DIAGNOSTIC_BYTES - _stderr.size
+              if (remaining > 0)
+                _stderr.write(buffer, 0, math.min(remaining, read))
+            }
+            read = stream.read(buffer)
+          }
+        } catch {
+          case _: java.io.IOException => ()
+        } finally {
+          Try(stream.close())
         }
       }
 
@@ -432,6 +475,7 @@ object StandaloneSupervisorProcessHost {
         case development: StandaloneDevelopmentLaunchProfile =>
           Vector(
             "cncf",
+            development.developmentDirectory.toAbsolutePath.normalize.toString,
             "server",
             s"--textus.server.port=${development.developmentDefaultPort}",
             s"--textus.control-center.registration-instance-id=$instanceId"
@@ -694,7 +738,7 @@ final class StandaloneTextusSupervisor(
             accepted
           case Right(child) =>
             child.stop()
-            _fail_reserved(saved, request, instanceid, now)
+            _fail_reserved(saved, request, instanceid, now, child.diagnostic)
           case Left(_) =>
             _fail_reserved(saved, request, instanceid, now)
         }
@@ -705,9 +749,10 @@ final class StandaloneTextusSupervisor(
     snapshot: StandaloneSupervisorSnapshot,
     request: SupervisorRequest,
     instanceid: String,
-    now: java.time.Instant
+    now: java.time.Instant,
+    diagnostic: Option[String] = None
   ): SupervisorResult = {
-    val failed = _result(request, SupervisorState.Failed, Some(StandaloneSupervisorProcessHost.EXECUTION_UNAVAILABLE), Some(instanceid), now)
+    val failed = _result(request, SupervisorState.Failed, Some(StandaloneSupervisorProcessHost.EXECUTION_UNAVAILABLE), Some(instanceid), now, diagnostic)
     val updated = snapshot.copy(
       records = snapshot.records.filterNot(_.request.requestId == request.requestId) :+ StandaloneSupervisorRequestRecord(request, failed),
       ownedInstances = snapshot.ownedInstances.removed(request.targetId)
@@ -750,13 +795,14 @@ final class StandaloneTextusSupervisor(
     state: SupervisorState,
     diagnosticcode: Option[String],
     instanceid: Option[String],
-    now: java.time.Instant
+    now: java.time.Instant,
+    diagnostic: Option[String] = None
   ): SupervisorResult =
     SupervisorResult(
       request.requestId,
       state,
       diagnosticcode,
-      diagnosticcode,
+      diagnostic.orElse(diagnosticcode),
       supervisorId,
       instanceid,
       Some(now),
