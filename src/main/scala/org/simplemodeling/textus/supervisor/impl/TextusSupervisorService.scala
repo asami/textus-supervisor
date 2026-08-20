@@ -1,6 +1,6 @@
 /*
  * @since   Jul. 28, 2026
- * @version Jul. 28, 2026
+ * @version Aug. 20, 2026
  * @author  ASAMI, Tomoharu
  */
 package org.simplemodeling.textus.supervisor.impl
@@ -12,6 +12,14 @@ import org.goldenport.cncf.spi.supervisor.{
   SupervisorAction,
   SupervisorRequest,
   SupervisorResult
+}
+import org.simplemodeling.textus.supervisor.datatype.{
+  SupervisorDiagnostic as SupervisorDiagnosticValue,
+  SupervisorDiagnosticCode as SupervisorDiagnosticCodeValue,
+  SupervisorId as SupervisorIdValue,
+  SupervisorInstanceId as SupervisorInstanceIdValue,
+  SupervisorRequestId as SupervisorRequestIdValue,
+  SupervisorRequestState as SupervisorRequestStateValue
 }
 
 /**
@@ -32,14 +40,14 @@ object TextusSupervisorService {
   def request(
     value: org.simplemodeling.textus.supervisor.value.SupervisorRequest
   ): Consequence[SupervisorRequest] =
-    _action(value.action).map { action =>
+    _action(value.action.value).map { action =>
       SupervisorRequest(
-        value.requestId,
-        value.idempotencyKey,
-        value.targetId,
-        value.deploymentId,
+        value.requestId.value,
+        value.idempotencyKey.value,
+        value.targetId.value,
+        value.deploymentId.map(_.value),
         action,
-        value.operatorSubjectId,
+        value.operatorSubjectId.value,
         value.deadlineAt
       )
     }
@@ -48,12 +56,12 @@ object TextusSupervisorService {
     value: SupervisorResult
   ): org.simplemodeling.textus.supervisor.value.SupervisorResult =
     org.simplemodeling.textus.supervisor.value.SupervisorResult(
-      value.requestId,
-      value.state.toString,
-      value.diagnosticCode,
-      value.diagnostic,
-      value.supervisorId,
-      value.instanceId,
+      SupervisorRequestIdValue(value.requestId),
+      SupervisorRequestStateValue(value.state.toString),
+      value.diagnosticCode.map(SupervisorDiagnosticCodeValue.apply),
+      value.diagnostic.map(SupervisorDiagnosticValue.apply),
+      SupervisorIdValue(value.supervisorId),
+      value.instanceId.map(SupervisorInstanceIdValue.apply),
       value.acceptedAt,
       value.completedAt
     )

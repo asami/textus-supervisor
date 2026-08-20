@@ -1,0 +1,27 @@
+schemaVersion: 2
+kind: car
+namespace: org.simplemodeling.textus
+id: Supervisor
+artifactId: textus-supervisor
+recommended: 0.1.0
+latestStable: 0.1.0
+status: active
+aliases: []
+tags: []
+terms: []
+versions:
+  - version: 0.1.0
+    channel: stable
+    status: active
+    component: org.simplemodeling.textus.Supervisor
+    publishedAt: 2026-08-20T17:35:37.776073+09:00
+    file: repository/car/org/simplemodeling/textus/textus-supervisor/0.1.0/textus-supervisor-0.1.0.car
+    runtime:
+      cncf:
+        minimum: 0.5.2
+        excluded: []
+        tested:
+          - 0.5.2
+    checksum:
+      sha256: 3a263dacb971c03fb8ecd0fb0b1356185ece36cd2da97f716ea47c5aef259248
+    integrityKey: org.simplemodeling.textus:textus-supervisor:0.1.0@sha256:3a263dacb971c03fb8ecd0fb0b1356185ece36cd2da97f716ea47c5aef259248

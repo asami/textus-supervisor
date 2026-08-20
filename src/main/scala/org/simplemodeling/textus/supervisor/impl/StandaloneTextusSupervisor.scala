@@ -1,7 +1,7 @@
 /*
  * @since   Jul. 28, 2026
- *  version Jul. 28, 2026
- * @version Aug. 14, 2026
+ *  version Aug. 14, 2026
+ * @version Aug. 20, 2026
  * @author  ASAMI, Tomoharu
  */
 package org.simplemodeling.textus.supervisor.impl
@@ -53,7 +53,7 @@ object StandaloneDevelopmentLaunchProfile {
   def discover(developmentDirectory: Path): Option[StandaloneDevelopmentLaunchProfile] = {
     val directory = developmentDirectory.toAbsolutePath.normalize
     val descriptor = directory.resolve("project.yaml")
-    Try(Files.readString(descriptor, StandardCharsets.UTF_8)).toOption
+    Try(Files.readString(descriptor, StandardCharsets.UTF_8)).toOption // cncf-car-lint: ignore documented standalone provider/bootstrap host boundary reads its private descriptor.
       .flatMap(_profile(_, directory))
   }
 
@@ -63,7 +63,7 @@ object StandaloneDevelopmentLaunchProfile {
     if (!Files.isDirectory(directory) || !Files.isRegularFile(descriptor))
       Left(PROFILE_UNAVAILABLE)
     else
-      Try(Files.readString(descriptor, StandardCharsets.UTF_8)).toEither.left.map(_ => PROFILE_UNAVAILABLE).flatMap { document =>
+      Try(Files.readString(descriptor, StandardCharsets.UTF_8)).toEither.left.map(_ => PROFILE_UNAVAILABLE).flatMap { document => // cncf-car-lint: ignore documented standalone provider/bootstrap host boundary reads its private descriptor.
         _profile(document, directory)
           .filter(_.targetId == targetId)
           .toRight(PROFILE_UNAVAILABLE)
@@ -172,7 +172,7 @@ object StandaloneDevelopmentProfileRegistry {
 
   private def _assembly_component_target_ids(directory: Path): Vector[String] = {
     val descriptor = directory.resolve("src/main/car/assembly-descriptor.yaml")
-    Try(Files.readString(descriptor, StandardCharsets.UTF_8)).toOption.toVector.flatMap { document =>
+    Try(Files.readString(descriptor, StandardCharsets.UTF_8)).toOption.toVector.flatMap { document => // cncf-car-lint: ignore documented standalone provider/bootstrap host boundary reads its private assembly descriptor.
       Try(new Yaml().load[AnyRef](document)).toOption.toVector.flatMap {
         case values: java.util.Map[?, ?] =>
           _mapping(values).get("components").toVector.flatMap {
@@ -204,7 +204,7 @@ object StandaloneDevelopmentProfileRegistry {
     values.get(key).collect { case value: String if value.trim.nonEmpty => value.trim }
 
   private def _catalog_sources(path: Path): Vector[CatalogSource] =
-    Try(Files.readString(path, StandardCharsets.UTF_8)).toOption.toVector.flatMap { document =>
+    Try(Files.readString(path, StandardCharsets.UTF_8)).toOption.toVector.flatMap { document => // cncf-car-lint: ignore documented standalone provider/bootstrap host boundary reads its private catalog.
       val lines = document.linesIterator.toVector
       _list_mappings(lines, "development", "roots").flatMap { values =>
         for {
@@ -310,7 +310,7 @@ object StandaloneSupervisorProcessHost {
   private val _diagnostic_drain_wait_millis = 1000L
   private val MAXIMUM_DIAGNOSTIC_BYTES = 16 * 1024
 
-  /** Standalone host process provider and process-ownership boundary. cncf-car-lint: ignore provider/bootstrap boundary. */
+  /** Standalone host process provider and process-ownership boundary. */
   object System extends StandaloneSupervisorProcessHost {
     def preflight(profile: StandaloneLaunchProfile, owned: Option[StandaloneSupervisorChild]): Either[String, Unit] =
       profile.defaultPort match {
@@ -322,9 +322,9 @@ object StandaloneSupervisorProcessHost {
     def start(profile: StandaloneLaunchProfile, instanceId: String): Either[String, StandaloneSupervisorChild] =
       Try {
         val childinstanceid = instanceId
-        val process = new ProcessBuilder(command(profile, instanceId)*)
-          .redirectOutput(ProcessBuilder.Redirect.INHERIT)
-          .redirectError(ProcessBuilder.Redirect.PIPE)
+        val process = new ProcessBuilder(command(profile, instanceId)*) // cncf-car-lint: ignore documented standalone provider/bootstrap host boundary owns child-process creation.
+          .redirectOutput(ProcessBuilder.Redirect.INHERIT) // cncf-car-lint: ignore documented standalone provider/bootstrap host boundary owns child-process output routing.
+          .redirectError(ProcessBuilder.Redirect.PIPE) // cncf-car-lint: ignore documented standalone provider/bootstrap host boundary owns child-process diagnostics.
         profile.workingDirectory.foreach(directory => process.directory(directory.toFile))
         _sanitize_environment(process.environment())
         val started = process.start()
@@ -350,13 +350,13 @@ object StandaloneSupervisorProcessHost {
       _tracked += _root
       _refresh_descendants()
       private val _capture_thread = {
-        val thread = new Thread(() => _capture_descendants(), "textus-supervisor-process-tree")
+        val thread = new Thread(() => _capture_descendants(), "textus-supervisor-process-tree") // cncf-car-lint: ignore documented standalone provider/bootstrap host boundary owns child-process observation.
         thread.setDaemon(true)
         thread.start()
         thread
       }
       private val _diagnostic_thread = {
-        val thread = new Thread(() => _capture_stderr(), "textus-supervisor-stderr")
+        val thread = new Thread(() => _capture_stderr(), "textus-supervisor-stderr") // cncf-car-lint: ignore documented standalone provider/bootstrap host boundary owns child-process diagnostic capture.
         thread.setDaemon(true)
         thread.start()
         thread
@@ -409,7 +409,7 @@ object StandaloneSupervisorProcessHost {
           _refresh_descendants()
           running = _root.isAlive
           if (running) {
-            try Thread.sleep(_capture_poll_millis)
+            try Thread.sleep(_capture_poll_millis) // cncf-car-lint: ignore documented standalone provider/bootstrap host boundary polls child-process ownership.
             catch {
               case _: InterruptedException =>
                 Thread.currentThread.interrupt()
@@ -457,7 +457,7 @@ object StandaloneSupervisorProcessHost {
         val deadline = java.lang.System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutmillis)
         var interrupted = false
         while (!interrupted && handles.exists(_.isAlive) && java.lang.System.nanoTime() < deadline) {
-          try Thread.sleep(_shutdown_poll_millis)
+          try Thread.sleep(_shutdown_poll_millis) // cncf-car-lint: ignore documented standalone provider/bootstrap host boundary waits for child-process shutdown.
           catch {
             case _: InterruptedException =>
               Thread.currentThread.interrupt()
@@ -505,7 +505,7 @@ object StandaloneSupervisorProcessHost {
       while (!ready && child.isAlive && java.lang.System.nanoTime() < deadline) {
         ready = !_port_available(port)
         if (!ready) {
-          try Thread.sleep(_startup_readiness_poll_millis)
+          try Thread.sleep(_startup_readiness_poll_millis) // cncf-car-lint: ignore documented standalone provider/bootstrap host boundary polls child-process readiness.
           catch {
             case _: InterruptedException =>
               Thread.currentThread.interrupt()
@@ -548,22 +548,22 @@ final class StandaloneSupervisorStateStore(path: Path, supervisorId: String) {
     if (!Files.isRegularFile(path))
       Right(StandaloneSupervisorSnapshot(SCHEMA_VERSION, supervisorId, Vector.empty, Map.empty))
     else
-      Try(Files.readString(path, StandardCharsets.UTF_8)).toEither.left.map(_ => STATE_UNAVAILABLE)
+      Try(Files.readString(path, StandardCharsets.UTF_8)).toEither.left.map(_ => STATE_UNAVAILABLE) // cncf-car-lint: ignore documented standalone provider/bootstrap host boundary reads its private durable snapshot.
         .flatMap(text => decode[StandaloneSupervisorSnapshot](text).left.map(_ => STATE_UNAVAILABLE))
         .filterOrElse(snapshot => snapshot.schemaVersion == SCHEMA_VERSION && snapshot.supervisorId == supervisorId, STATE_UNAVAILABLE)
 
   def save(snapshot: StandaloneSupervisorSnapshot): Either[String, Unit] =
     Try {
-      Files.createDirectories(path.getParent)
-      val temporary = Files.createTempFile(path.getParent, "textus-supervisor-state-", ".json")
+      Files.createDirectories(path.getParent) // cncf-car-lint: ignore documented standalone provider/bootstrap host boundary prepares its private durable snapshot directory.
+      val temporary = Files.createTempFile(path.getParent, "textus-supervisor-state-", ".json") // cncf-car-lint: ignore documented standalone provider/bootstrap host boundary creates a private durable snapshot replacement.
       try {
-        Files.writeString(temporary, snapshot.asJson.noSpaces + "\n", StandardCharsets.UTF_8)
-        try Files.move(temporary, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+        Files.writeString(temporary, snapshot.asJson.noSpaces + "\n", StandardCharsets.UTF_8) // cncf-car-lint: ignore documented standalone provider/bootstrap host boundary writes its private durable snapshot.
+        try Files.move(temporary, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING) // cncf-car-lint: ignore documented standalone provider/bootstrap host boundary atomically replaces its private durable snapshot.
         catch {
           case _: java.nio.file.AtomicMoveNotSupportedException =>
-            Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING)
+            Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING) // cncf-car-lint: ignore documented standalone provider/bootstrap host boundary replaces its private durable snapshot when atomic move is unavailable.
         }
-      } finally Files.deleteIfExists(temporary)
+      } finally Files.deleteIfExists(temporary) // cncf-car-lint: ignore documented standalone provider/bootstrap host boundary removes its private temporary snapshot.
     }.map(_ => ()).toEither.left.map(_ => STATE_UNAVAILABLE)
 }
 

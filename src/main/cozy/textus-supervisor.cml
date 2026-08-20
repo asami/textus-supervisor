@@ -63,6 +63,96 @@ controlling a deployment.
 
 protected
 
+# DATATYPE
+
+## SupervisorRequestId
+
+### ATTRIBUTE
+
+| name  | type   | multiplicity | min-length | max-length |
+|-------|--------|--------------|------------|------------|
+| value | string | 1            | 1          | 512        |
+
+## SupervisorIdempotencyKey
+
+### ATTRIBUTE
+
+| name  | type   | multiplicity | min-length | max-length |
+|-------|--------|--------------|------------|------------|
+| value | string | 1            | 1          | 512        |
+
+## SupervisorTargetId
+
+### ATTRIBUTE
+
+| name  | type   | multiplicity | min-length | max-length |
+|-------|--------|--------------|------------|------------|
+| value | string | 1            | 1          | 512        |
+
+## SupervisorDeploymentId
+
+### ATTRIBUTE
+
+| name  | type   | multiplicity | min-length | max-length |
+|-------|--------|--------------|------------|------------|
+| value | string | 1            | 1          | 512        |
+
+## SupervisorActionName
+
+### ATTRIBUTE
+
+| name  | type   | multiplicity | min-length | max-length |
+|-------|--------|--------------|------------|------------|
+| value | string | 1            | 1          | 128        |
+
+## SupervisorOperatorSubjectId
+
+### ATTRIBUTE
+
+| name  | type   | multiplicity | min-length | max-length |
+|-------|--------|--------------|------------|------------|
+| value | string | 1            | 1          | 512        |
+
+## SupervisorRequestState
+
+### ATTRIBUTE
+
+| name  | type   | multiplicity | min-length | max-length |
+|-------|--------|--------------|------------|------------|
+| value | string | 1            | 1          | 128        |
+
+## SupervisorDiagnosticCode
+
+### ATTRIBUTE
+
+| name  | type   | multiplicity | min-length | max-length |
+|-------|--------|--------------|------------|------------|
+| value | string | 1            | 1          | 128        |
+
+## SupervisorDiagnostic
+
+### ATTRIBUTE
+
+| name  | type   | multiplicity | max-length |
+|-------|--------|--------------|------------|
+| value | string | 1            | 4096       |
+
+## SupervisorId
+
+### ATTRIBUTE
+
+| name  | type   | multiplicity | min-length | max-length |
+|-------|--------|--------------|------------|------------|
+| value | string | 1            | 1          | 512        |
+
+## SupervisorInstanceId
+
+### ATTRIBUTE
+
+| name  | type   | multiplicity | min-length | max-length |
+|-------|--------|--------------|------------|------------|
+| value | string | 1            | 1          | 512        |
+
 # VALUE
 
 ## SupervisorRequest
@@ -77,12 +167,12 @@ Component operation projection of the CNCF Supervisor request contract.
 
 | name              | type    | multiplicity |
 |-------------------+---------+--------------|
-| requestId         | string  | 1            |
-| idempotencyKey    | string  | 1            |
-| targetId          | string  | 1            |
-| deploymentId      | string  | ?            |
-| action            | string  | 1            |
-| operatorSubjectId | string  | 1            |
+| requestId         | SupervisorRequestId         | 1            |
+| idempotencyKey    | SupervisorIdempotencyKey    | 1            |
+| targetId          | SupervisorTargetId          | 1            |
+| deploymentId      | SupervisorDeploymentId      | ?            |
+| action            | SupervisorActionName        | 1            |
+| operatorSubjectId | SupervisorOperatorSubjectId | 1            |
 | deadlineAt        | instant | 1            |
 
 ## SupervisorResult
@@ -99,12 +189,12 @@ Component operation projection of the CNCF Supervisor result contract.
 
 | name           | type    | multiplicity |
 |----------------+---------+--------------|
-| requestId      | string  | 1            |
-| state          | string  | 1            |
-| diagnosticCode | string  | ?            |
-| diagnostic     | string  | ?            |
-| supervisorId   | string  | 1            |
-| instanceId     | string  | ?            |
+| requestId      | SupervisorRequestId      | 1            |
+| state          | SupervisorRequestState   | 1            |
+| diagnosticCode | SupervisorDiagnosticCode | ?            |
+| diagnostic     | SupervisorDiagnostic     | ?            |
+| supervisorId   | SupervisorId             | 1            |
+| instanceId     | SupervisorInstanceId     | ?            |
 | acceptedAt     | instant | ?            |
 | completedAt    | instant | ?            |
 
@@ -120,7 +210,7 @@ Request to look up one durable Supervisor request.
 
 | name      | type   | multiplicity |
 |-----------+--------+--------------|
-| requestId | string | 1            |
+| requestId | SupervisorRequestId | 1            |
 
 ## SupervisorLookupResult
 

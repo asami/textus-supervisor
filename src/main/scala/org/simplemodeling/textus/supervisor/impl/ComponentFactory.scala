@@ -1,6 +1,6 @@
 /*
- *  version Jul. 28, 2026
- * @version Aug.  8, 2026
+ * @since   Jul. 28, 2026
+ * @version Aug. 20, 2026
  */
 package org.simplemodeling.textus.supervisor.impl
 
@@ -114,7 +114,7 @@ final class DefaultSupervisorServiceFactory(
     for {
       implementation <- _service
       value <- org.simplemodeling.textus.supervisor.value.SupervisorLookup.createC(record)
-      result <- implementation.lookup(value.requestId)(using core.executionContext)
+      result <- implementation.lookup(value.requestId.value)(using core.executionContext)
     } yield org.simplemodeling.textus.supervisor.value.SupervisorLookupResult(
       result.map(TextusSupervisorService.result)
     )

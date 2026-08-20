@@ -5,7 +5,7 @@ Generated Cozy CAR component project.
 Component:
 - artifact: `textus-supervisor`
 - package: `org.simplemodeling.textus.supervisor`
-- version: `0.1.0-SNAPSHOT`
+- version: `0.1.0`
 
 Typical workflow:
 - `sbt cozyGenerate`

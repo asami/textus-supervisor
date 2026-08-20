@@ -1,18 +1,22 @@
 project:
   namespace: "org.simplemodeling.textus"
   id: "Supervisor"
+  name: "textus-supervisor"
   title: "Textus Supervisor"
   kind: car
+  scalaPackage: "org.simplemodeling.textus.supervisor"
   component:
+    name: "Supervisor"
+    className: "SupervisorComponent"
     displayName: "Textus Supervisor"
-    version: "0.1.0-SNAPSHOT"
+    version: "0.1.0"
 
 build:
   scalaVersion: "3.3.8"
-  cozyVersion: "0.3.4-SNAPSHOT"
+  cozyVersion: "0.3.2.1"
   dependencies:
     compile:
-      - "org.goldenport::goldenport-cncf:0.5.2-SNAPSHOT"
+      - "org.goldenport::goldenport-cncf:0.5.2"
     test:
       - "org.scalatest::scalatest:3.2.10"
 
@@ -28,10 +32,10 @@ packaging:
       domain: "system-administration"
     runtime:
       cncf:
-        minimum: "0.5.2-SNAPSHOT"
+        minimum: "0.5.2"
         excluded: []
         tested:
-          - "0.5.2-SNAPSHOT"
+          - "0.5.2"
 
 warehouse:
   repository_artifacts:
