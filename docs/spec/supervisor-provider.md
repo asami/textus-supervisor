@@ -17,6 +17,11 @@ return the retained result and never create another managed deployment.
 The standalone provider retains a versioned request/result and ownership
 snapshot below the configured Control Center home. It writes a replacement
 snapshot before starting a child and replaces the durable file atomically when
-the host filesystem supports it. Unknown, corrupt, or stale ownership fails
-closed; the provider never reconstructs ownership from a PID, command line, or
-occupied port. External lifecycle authority remains the opaque Supervisor SPI.
+the host filesystem supports it. After an embedded Supervisor restart, its
+standalone process host may consume the Launcher-owned local server-evidence
+store as a privileged recovery input. Live recovery requires an exact instance
+ID, artifact, execution mode, development directory, PID, and process start
+instant; a profile match alone may only clear authoritative stopped evidence
+and can never create a kill-capable child handle. Unknown, corrupt, ambiguous,
+or mismatched ownership fails closed. External lifecycle authority remains the
+opaque Supervisor SPI, and no PID or host evidence enters that public contract.

@@ -1,7 +1,6 @@
 /*
  * @since   Jul. 28, 2026
- *  version Jul. 28, 2026
- * @version Aug. 14, 2026
+ * @version Aug. 28, 2026
  * @author  ASAMI, Tomoharu
  */
 package org.simplemodeling.textus.supervisor.impl
@@ -70,7 +69,7 @@ final class StandaloneTextusSupervisorSpec extends AnyWordSpec with Matchers wit
     }
 
       "discover standalone development profiles from the Control Center catalog" in {
-      Given("an isolated Control Center home and development catalog")
+      Given("an isolated Control Center catalog with an ArtScene assembly dependency and sibling development projects")
       val home = _work_directory("catalog-home")
       val developmentroot = _work_directory("catalog-root")
       val project = Files.createDirectory(developmentroot.resolve("textus-art-scene"))
@@ -144,18 +143,18 @@ final class StandaloneTextusSupervisorSpec extends AnyWordSpec with Matchers wit
       StandaloneDevelopmentProfileRegistry.registerConfigured(supervisor, configuration)
       val result = supervisor.submit(_request("request-catalog", "catalog-key", SupervisorAction.Start, Some("DEV:test"))).toOption.get
 
-      Then("the target starts without launcher supervisor configuration or credentials")
+      Then("the selected ArtScene root is the only development override and assembly dependencies retain normal packaged-CAR repository resolution")
       result.state shouldBe SupervisorState.Accepted
       host.starts shouldBe 1
-      host.profiles.head.asInstanceOf[StandaloneDevelopmentLaunchProfile].developmentRepositoryDirectories shouldBe
-        Vector(airuntime, project).map(_.toAbsolutePath.normalize).sortBy(_.toString)
+      val profile = host.profiles.head.asInstanceOf[StandaloneDevelopmentLaunchProfile]
+      profile.developmentRepositoryDirectories shouldBe Vector(project.toAbsolutePath.normalize)
       StandaloneSupervisorProcessHost.System.command(host.profiles.head, "instance-1") shouldBe Vector(
         "cncf",
         project.toAbsolutePath.normalize.toString,
         "server",
         "--textus.server.port=18011",
         "--textus.control-center.registration-instance-id=instance-1",
-        "--textus.repository.component.dev.dir=" + Vector(airuntime, project).map(_.toAbsolutePath.normalize).sortBy(_.toString).mkString(",")
+        "--textus.repository.component.dev.dir=" + project.toAbsolutePath.normalize
       )
     }
 
@@ -256,6 +255,41 @@ final class StandaloneTextusSupervisorSpec extends AnyWordSpec with Matchers wit
           _await_condition(5000L)(!process.isAlive) shouldBe true
 
           Then("the supervisor-owned process tree remains observable and stops together")
+          child.isAlive shouldBe true
+          child.stop() shouldBe true
+          child.isAlive shouldBe false
+        } finally {
+          child.stop()
+          if (process.isAlive) {
+            process.destroyForcibly()
+            try process.waitFor(5, TimeUnit.SECONDS)
+            catch {
+              case _: InterruptedException => Thread.currentThread.interrupt()
+            }
+          }
+        }
+      }
+
+      "retain a recovered descendant after its launcher wrapper exits" in {
+        Given("Launcher evidence for a live Java wrapper that leaves a long-lived server descendant")
+        val directory = _work_directory("recovered-process-tree")
+        val port = _free_port()
+        val process = _process_tree_fixture("wrapper", port)
+        val instanceid = "40404040404040408040404040404040"
+        val evidencepath = directory.resolve("server-evidence.json")
+        val startedat = process.toHandle.info.startInstant().orElseThrow().toString
+        Files.writeString(
+          evidencepath,
+          s"""{"schema":"cncf.launcher.server-evidence.v1","entries":[{"instanceId":"$instanceid","target":"ArtScene","artifactId":"textus-art-scene","executionMode":"development","developmentDirectory":"${directory.toAbsolutePath.normalize}","lastSeenAt":"2026-08-28T00:00:00Z","stoppedAt":null,"processId":${process.pid},"processStartedAt":"$startedat"}]}"""
+        )
+        val profile = StandaloneDevelopmentLaunchProfile("textus-art-scene", directory, port)
+        val child = StandaloneSupervisorProcessHost.System._recover(profile, instanceid, evidencepath).toOption.flatten.get
+
+        try {
+          When("the recovered launcher wrapper exits after its descendant becomes ready")
+          _await_condition(5000L)(!process.isAlive) shouldBe true
+
+          Then("the recovered ownership continues to observe and stop the descendant")
           child.isAlive shouldBe true
           child.stop() shouldBe true
           child.isAlive shouldBe false
@@ -452,7 +486,7 @@ final class StandaloneTextusSupervisorSpec extends AnyWordSpec with Matchers wit
       host.starts shouldBe 1
     }
 
-      "recover stale development ownership across an embedded supervisor restart" in {
+      "restart after authoritative stopped evidence clears stale development ownership" in {
       Given("one accepted development request persisted by the embedded supervisor")
       val directory = _work_directory("restart")
       val statepath = directory.resolve("supervisor-state.json")
@@ -462,22 +496,24 @@ final class StandaloneTextusSupervisorSpec extends AnyWordSpec with Matchers wit
       first.registerDevelopmentProfile(StandaloneDevelopmentLaunchProfile("textus-art-scene", directory, 18011, "DEV:dev2026"))
       val accepted = first.submit(_request("request-retained", "retained-key", SupervisorAction.Start, Some("DEV:dev2026"))).toOption.get
 
-      When("Control Center reconstructs its embedded supervisor from the same state")
+      When("Control Center reconstructs its embedded supervisor with authoritative stopped Launcher evidence")
       val reconstructedhost = new RecordingProcessHost
+      reconstructedhost.recovery = Right(None)
       val reconstructed = new StandaloneTextusSupervisor(statepath, reconstructedhost)
       reconstructed.registerDevelopmentProfile(StandaloneDevelopmentLaunchProfile("textus-art-scene", directory, 18011, "DEV:dev2026"))
       val lookedup = reconstructed.lookup("request-retained").toOption.get
-      val secondstart = reconstructed.submit(_request("request-second", "second-key", SupervisorAction.Start, Some("DEV:dev2026"))).toOption.get
+      val restarted = reconstructed.submit(_request("request-second", "second-key", SupervisorAction.Restart, Some("DEV:dev2026"))).toOption.get
 
-      Then("request evidence survives and a free declared port recovers stale development ownership")
+      Then("request evidence survives and Restart clears ownership before launching exactly once")
       lookedup shouldBe Some(accepted)
-      secondstart.state shouldBe SupervisorState.Accepted
+      restarted.state shouldBe SupervisorState.Accepted
+      reconstructedhost.recoveries shouldBe 1
       reconstructedhost.preflights shouldBe 1
       reconstructedhost.starts shouldBe 1
     }
 
-      "retain stale development ownership when preflight rejects recovery" in {
-      Given("one accepted development request whose persisted ownership has no reconstructed child handle")
+      "clear stopped development ownership before port preflight rejects a new start" in {
+      Given("one accepted development request with authoritative stopped runtime evidence")
       val directory = _work_directory("restart-preflight-rejected")
       val statepath = directory.resolve("supervisor-state.json")
       given ExecutionContext = ExecutionContext.create()
@@ -486,14 +522,107 @@ final class StandaloneTextusSupervisorSpec extends AnyWordSpec with Matchers wit
       val accepted = first.submit(_request("request-preflight-retained", "preflight-retained-key", SupervisorAction.Start, Some("DEV:dev2026"))).toOption.get
 
       When("the selected development profile reports its declared port unavailable")
-      val reconstructed = new StandaloneTextusSupervisor(statepath, new UnavailablePreflightProcessHost)
+      val reconstructedhost = new UnavailablePreflightProcessHost
+      reconstructedhost.recovery = Right(None)
+      val reconstructed = new StandaloneTextusSupervisor(statepath, reconstructedhost)
       reconstructed.registerDevelopmentProfile(StandaloneDevelopmentLaunchProfile("textus-art-scene", directory, 18011, "DEV:dev2026"))
       val rejected = reconstructed.submit(_request("request-preflight-second", "preflight-second-key", SupervisorAction.Start, Some("DEV:dev2026"))).toOption.get
 
-      Then("the exact preflight code and retained ownership instance identify the rejected recovery")
+      Then("the exact preflight code rejects the new start after stale ownership is cleared")
       rejected.state shouldBe SupervisorState.Rejected
       rejected.diagnosticCode shouldBe Some(StandaloneSupervisorProcessHost.PORT_UNAVAILABLE)
-      rejected.instanceId shouldBe accepted.instanceId
+      rejected.instanceId shouldBe None
+    }
+
+      "recover a live child for restart and stop after an embedded supervisor restart" in {
+      Given("one accepted development request with an authoritative live recovered child")
+      val directory = _work_directory("live-recovery")
+      val statepath = directory.resolve("supervisor-state.json")
+      given ExecutionContext = ExecutionContext.create()
+      val firsthost = new RecordingProcessHost
+      val first = new StandaloneTextusSupervisor(statepath, firsthost)
+      first.registerDevelopmentProfile(StandaloneDevelopmentLaunchProfile("textus-art-scene", directory, 18011, "DEV:dev2026"))
+      val accepted = first.submit(_request("request-live", "live-key", SupervisorAction.Start, Some("DEV:dev2026"))).toOption.get
+      val recoveredchild = new RecordingChild(accepted.instanceId.get, Some(18011))
+      val restarthost = new RecordingProcessHost
+      restarthost.recovery = Right(Some(recoveredchild))
+      val restarted = new StandaloneTextusSupervisor(statepath, restarthost)
+      restarted.registerDevelopmentProfile(StandaloneDevelopmentLaunchProfile("textus-art-scene", directory, 18011, "DEV:dev2026"))
+
+      When("Restart recovers the live child and a later reconstructed Stop recovers the replacement")
+      val restartresult = restarted.submit(_request("request-live-restart", "live-restart-key", SupervisorAction.Restart, Some("DEV:dev2026"))).toOption.get
+      val stoppedchild = new RecordingChild(restartresult.instanceId.get, Some(18011))
+      val stophost = new RecordingProcessHost
+      stophost.recovery = Right(Some(stoppedchild))
+      val stopping = new StandaloneTextusSupervisor(statepath, stophost)
+      stopping.registerDevelopmentProfile(StandaloneDevelopmentLaunchProfile("textus-art-scene", directory, 18011, "DEV:dev2026"))
+      val stopresult = stopping.submit(_request("request-live-stop", "live-stop-key", SupervisorAction.Stop, Some("DEV:dev2026"))).toOption.get
+
+      Then("both lifecycle actions recover the child, stop it, and retain no stale ownership")
+      restartresult.state shouldBe SupervisorState.Accepted
+      restarthost.recoveries shouldBe 1
+      recoveredchild.stops shouldBe 1
+      restarthost.starts shouldBe 1
+      stopresult.state shouldBe SupervisorState.Stopped
+      stophost.recoveries shouldBe 1
+      stoppedchild.stops shouldBe 1
+    }
+
+      "fail closed when recovered process identity is unsafe" in {
+      Given("one accepted development request and an unsafe Launcher process identity")
+      val directory = _work_directory("unsafe-recovery")
+      val statepath = directory.resolve("supervisor-state.json")
+      given ExecutionContext = ExecutionContext.create()
+      val first = new StandaloneTextusSupervisor(statepath, new RecordingProcessHost)
+      first.registerDevelopmentProfile(StandaloneDevelopmentLaunchProfile("textus-art-scene", directory, 18011, "DEV:dev2026"))
+      first.submit(_request("request-unsafe", "unsafe-key", SupervisorAction.Start, Some("DEV:dev2026"))).toOption.get
+      val host = new RecordingProcessHost
+      host.recovery = Left(StandaloneSupervisorProcessHost.RECOVERY_EVIDENCE_UNSAFE)
+      val reconstructed = new StandaloneTextusSupervisor(statepath, host)
+      reconstructed.registerDevelopmentProfile(StandaloneDevelopmentLaunchProfile("textus-art-scene", directory, 18011, "DEV:dev2026"))
+
+      When("the operator requests Restart without a safely recoverable child")
+      val result = reconstructed.submit(_request("request-unsafe-restart", "unsafe-restart-key", SupervisorAction.Restart, Some("DEV:dev2026"))).toOption.get
+
+      Then("the supervisor retains ownership and neither kills nor launches a process")
+      result.state shouldBe SupervisorState.Rejected
+      result.diagnosticCode shouldBe Some(StandaloneSupervisorProcessHost.RECOVERY_EVIDENCE_UNSAFE)
+      host.recoveries shouldBe 1
+      host.starts shouldBe 0
+      host.children shouldBe empty
+    }
+
+      "decode legacy stopped evidence and require exact instance identity for live recovery" in {
+      Given("a development profile and legacy Launcher v1 evidence files")
+      val directory = _work_directory("system-evidence-recovery")
+      val profile = StandaloneDevelopmentLaunchProfile("textus-art-scene", directory, 18011)
+      val stoppedpath = directory.resolve("stopped-evidence.json")
+      val unsafepath = directory.resolve("unsafe-evidence.json")
+      val mismatchpath = directory.resolve("mismatched-live-evidence.json")
+      val instanceid = "30303030403040308030303030303030"
+      val currentstartedat = ProcessHandle.current().info.startInstant().orElseThrow().toString
+      Files.writeString(
+        stoppedpath,
+        s"""{"schema":"cncf.launcher.server-evidence.v1","entries":[{"instanceId":"legacy-launcher-id","target":"ArtScene","artifactId":"textus-art-scene","executionMode":"development","developmentDirectory":"${directory.toAbsolutePath.normalize}","lastSeenAt":"2026-08-28T00:00:00Z","stoppedAt":"2026-08-28T00:00:01Z"}]}"""
+      )
+      Files.writeString(
+        unsafepath,
+        s"""{"schema":"cncf.launcher.server-evidence.v1","entries":[{"instanceId":"$instanceid","target":"ArtScene","artifactId":"textus-art-scene","executionMode":"development","developmentDirectory":"${directory.toAbsolutePath.normalize}","lastSeenAt":"2026-08-28T00:00:00Z","stoppedAt":null,"processId":${ProcessHandle.current().pid},"processStartedAt":"2000-01-01T00:00:00Z"}]}"""
+      )
+      Files.writeString(
+        mismatchpath,
+        s"""{"schema":"cncf.launcher.server-evidence.v1","entries":[{"instanceId":"another-live-instance","target":"ArtScene","artifactId":"textus-art-scene","executionMode":"development","developmentDirectory":"${directory.toAbsolutePath.normalize}","lastSeenAt":"2026-08-28T00:00:00Z","stoppedAt":null,"processId":${ProcessHandle.current().pid},"processStartedAt":"$currentstartedat"}]}"""
+      )
+
+      When("the System host recovers stopped evidence and inspects exact and mismatched live identities")
+      val stopped = StandaloneSupervisorProcessHost.System._recover(profile, instanceid, stoppedpath)
+      val unsafe = StandaloneSupervisorProcessHost.System._recover(profile, instanceid, unsafepath)
+      val mismatch = StandaloneSupervisorProcessHost.System._recover(profile, instanceid, mismatchpath)
+
+      Then("stopped state clears safely while unsafe or non-exact live attachment is rejected")
+      stopped shouldBe Right(None)
+      unsafe shouldBe Left(StandaloneSupervisorProcessHost.RECOVERY_EVIDENCE_UNSAFE)
+      mismatch shouldBe Left(StandaloneSupervisorProcessHost.RECOVERY_EVIDENCE_MISMATCH)
     }
 
       "keep stale repository ownership fail closed across an embedded supervisor restart" in {
@@ -511,10 +640,10 @@ final class StandaloneTextusSupervisorSpec extends AnyWordSpec with Matchers wit
       reconstructed.registerRepositoryProfile(StandaloneRepositoryLaunchProfile("LOCAL:repository", directory.toString))
       val secondstart = reconstructed.submit(_request("request-repository-second", "repository-second-key", SupervisorAction.Start, Some("LOCAL:repository"))).toOption.get
 
-      Then("repository ownership remains fail closed because its runtime cannot be observed by a declared port")
+      Then("repository ownership remains fail closed because its runtime evidence cannot be safely recovered")
       accepted.state shouldBe SupervisorState.Accepted
       secondstart.state shouldBe SupervisorState.Rejected
-      secondstart.diagnosticCode shouldBe Some("supervisor-ownership-unavailable")
+      secondstart.diagnosticCode shouldBe Some(StandaloneSupervisorProcessHost.RECOVERY_UNAVAILABLE)
       reconstructedhost.starts shouldBe 0
     }
     }
@@ -584,6 +713,8 @@ final class StandaloneTextusSupervisorSpec extends AnyWordSpec with Matchers wit
     var starts = 0
     var children = Vector.empty[RecordingChild]
     var profiles = Vector.empty[StandaloneLaunchProfile]
+    var recoveries = 0
+    var recovery: Either[String, Option[StandaloneSupervisorChild]] = Left(StandaloneSupervisorProcessHost.RECOVERY_UNAVAILABLE)
 
     def preflight(profile: StandaloneLaunchProfile, owned: Option[StandaloneSupervisorChild]): Either[String, Unit] = {
       preflights += 1
@@ -596,6 +727,11 @@ final class StandaloneTextusSupervisorSpec extends AnyWordSpec with Matchers wit
       val child = new RecordingChild(instanceId, profile.defaultPort)
       children = children :+ child
       Right(child)
+    }
+
+    override def recover(profile: StandaloneLaunchProfile, instanceId: String): Either[String, Option[StandaloneSupervisorChild]] = {
+      recoveries += 1
+      recovery
     }
   }
 
@@ -654,11 +790,15 @@ final class StandaloneTextusSupervisorSpec extends AnyWordSpec with Matchers wit
   }
 
   private final class UnavailablePreflightProcessHost extends StandaloneSupervisorProcessHost {
+    var recovery: Either[String, Option[StandaloneSupervisorChild]] = Left(StandaloneSupervisorProcessHost.RECOVERY_UNAVAILABLE)
     def preflight(profile: StandaloneLaunchProfile, owned: Option[StandaloneSupervisorChild]): Either[String, Unit] =
       Left(StandaloneSupervisorProcessHost.PORT_UNAVAILABLE)
 
     def start(profile: StandaloneLaunchProfile, instanceId: String): Either[String, StandaloneSupervisorChild] =
       Left(StandaloneSupervisorProcessHost.EXECUTION_UNAVAILABLE)
+
+    override def recover(profile: StandaloneLaunchProfile, instanceId: String): Either[String, Option[StandaloneSupervisorChild]] =
+      recovery
   }
 }
 

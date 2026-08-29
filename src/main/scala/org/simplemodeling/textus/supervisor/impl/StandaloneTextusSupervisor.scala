@@ -1,7 +1,6 @@
 /*
  * @since   Jul. 28, 2026
- *  version Aug. 14, 2026
- * @version Aug. 20, 2026
+ * @version Aug. 28, 2026
  * @author  ASAMI, Tomoharu
  */
 package org.simplemodeling.textus.supervisor.impl
@@ -10,8 +9,10 @@ import java.io.ByteArrayOutputStream
 import java.net.{InetAddress, InetSocketAddress, ServerSocket}
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path, StandardCopyOption}
+import java.time.Instant
 import java.util.concurrent.TimeUnit
 import scala.jdk.CollectionConverters.*
+import scala.jdk.OptionConverters.*
 import scala.util.Try
 
 import io.circe.{Decoder, Encoder}
@@ -154,54 +155,16 @@ object StandaloneDevelopmentProfileRegistry {
           .toVector
           .sortBy(_.toString)
         val profiles = developmentdirectories.flatMap(StandaloneDevelopmentLaunchProfile.discover)
-        val profilesbytargetid = profiles.map(profile => profile.targetId -> profile.developmentDirectory).toMap
         profiles
-          .map { profile =>
-            val requiredtargetids = (profile.targetId +: _assembly_component_target_ids(profile.developmentDirectory)).distinct
-            val repositories = requiredtargetids.flatMap(profilesbytargetid.get).distinct.sortBy(_.toString)
-            profile.copy(
-              deploymentId = _development_deployment_id(source.sourceid),
-              developmentRepositoryDirectories = repositories
-            )
-          }
+          .map(profile => profile.copy(
+            deploymentId = _development_deployment_id(source.sourceid),
+            developmentRepositoryDirectories = Vector(profile.developmentDirectory)
+          ))
           .foreach(supervisor.registerDevelopmentProfile)
       }
       finally children.close()
     }
   }
-
-  private def _assembly_component_target_ids(directory: Path): Vector[String] = {
-    val descriptor = directory.resolve("src/main/car/assembly-descriptor.yaml")
-    Try(Files.readString(descriptor, StandardCharsets.UTF_8)).toOption.toVector.flatMap { document => // cncf-car-lint: ignore documented standalone provider/bootstrap host boundary reads its private assembly descriptor.
-      Try(new Yaml().load[AnyRef](document)).toOption.toVector.flatMap {
-        case values: java.util.Map[?, ?] =>
-          _mapping(values).get("components").toVector.flatMap {
-            case entries: java.util.List[?] => entries.asScala.toVector.flatMap(_assembly_component_target_id)
-            case _ => Vector.empty
-          }
-        case _ => Vector.empty
-      }
-    }.distinct
-  }
-
-  private def _assembly_component_target_id(value: Any): Option[String] = {
-    val metadata = _mapping(value)
-    val canonical = for {
-      namespace <- _string(metadata, "namespace")
-      id <- _string(metadata, "id")
-      projection <- Try(ComponentIdentityProjection.of(ComponentId.require(s"$namespace.$id"))).toOption
-    } yield projection.mavenArtifactId()
-    canonical.orElse(_string(metadata, "name"))
-  }
-
-  private def _mapping(value: Any): Map[String, Any] = value match {
-    case values: java.util.Map[?, ?] =>
-      values.asScala.collect { case (key: String, item) => key -> item }.toMap
-    case _ => Map.empty
-  }
-
-  private def _string(values: Map[String, Any], key: String): Option[String] =
-    values.get(key).collect { case value: String if value.trim.nonEmpty => value.trim }
 
   private def _catalog_sources(path: Path): Vector[CatalogSource] =
     Try(Files.readString(path, StandardCharsets.UTF_8)).toOption.toVector.flatMap { document => // cncf-car-lint: ignore documented standalone provider/bootstrap host boundary reads its private catalog.
@@ -297,11 +260,18 @@ trait StandaloneSupervisorChild {
 trait StandaloneSupervisorProcessHost {
   def preflight(profile: StandaloneLaunchProfile, owned: Option[StandaloneSupervisorChild]): Either[String, Unit]
   def start(profile: StandaloneLaunchProfile, instanceId: String): Either[String, StandaloneSupervisorChild]
+  def recover(profile: StandaloneLaunchProfile, instanceId: String): Either[String, Option[StandaloneSupervisorChild]] =
+    Left(StandaloneSupervisorProcessHost.RECOVERY_UNAVAILABLE)
 }
 
 object StandaloneSupervisorProcessHost {
   val EXECUTION_UNAVAILABLE = "supervisor-execution-unavailable"
   val PORT_UNAVAILABLE = "supervisor-port-unavailable"
+  val RECOVERY_UNAVAILABLE = "supervisor-recovery-unavailable"
+  val RECOVERY_EVIDENCE_UNAVAILABLE = "supervisor-launcher-evidence-unavailable"
+  val RECOVERY_EVIDENCE_AMBIGUOUS = "supervisor-launcher-evidence-ambiguous"
+  val RECOVERY_EVIDENCE_MISMATCH = "supervisor-launcher-evidence-mismatch"
+  val RECOVERY_EVIDENCE_UNSAFE = "supervisor-launcher-evidence-unsafe"
   val STARTUP_READINESS_TIMEOUT_MILLIS = 15000L
   private val _startup_readiness_poll_millis = 100L
   private val _capture_poll_millis = 25L
@@ -331,12 +301,172 @@ object StandaloneSupervisorProcessHost {
         new SystemChild(childinstanceid, profile.defaultPort, started)
       }.toEither.left.map(_ => EXECUTION_UNAVAILABLE)
 
+    override def recover(profile: StandaloneLaunchProfile, instanceId: String): Either[String, Option[StandaloneSupervisorChild]] =
+      _recover(profile, instanceId, _launcher_evidence_path)
+
+    private[impl] def _recover(
+      profile: StandaloneLaunchProfile,
+      instanceid: String,
+      evidencepath: Path
+    ): Either[String, Option[StandaloneSupervisorChild]] =
+      _read_evidence(evidencepath).flatMap { entries =>
+        _select_evidence(entries, profile, instanceid).flatMap {
+          case entry if entry.stoppedAt.nonEmpty => Right(None)
+          case entry =>
+            for {
+              pid <- entry.processId.toRight(RECOVERY_EVIDENCE_UNSAFE)
+              startedat <- entry.processStartedAt.toRight(RECOVERY_EVIDENCE_UNSAFE)
+              handle <- ProcessHandle.of(pid).toScala.toRight(RECOVERY_EVIDENCE_UNSAFE)
+              _ <- Either.cond(handle.isAlive, (), RECOVERY_EVIDENCE_UNSAFE)
+              _ <- Either.cond(handle.info.startInstant.toScala.contains(startedat), (), RECOVERY_EVIDENCE_UNSAFE)
+            } yield Some(new RecoveredSystemChild(entry.instanceId, profile.defaultPort, handle))
+        }
+      }
+
     private[impl] def _child(
       process: Process,
       instanceid: String,
       port: Option[Int]
     ): StandaloneSupervisorChild =
       new SystemChild(instanceid, port, process)
+
+    private val _launcher_evidence_schema = "cncf.launcher.server-evidence.v1"
+
+    private final case class LauncherEvidenceEntry(
+      instanceId: String,
+      target: String,
+      artifactId: Option[String],
+      executionMode: String,
+      developmentDirectory: Option[String],
+      lastSeenAt: Instant,
+      stoppedAt: Option[Instant],
+      processId: Option[Long],
+      processStartedAt: Option[Instant]
+    )
+
+    private final case class LauncherEvidenceSnapshot(
+      schema: String,
+      entries: Vector[LauncherEvidenceEntry]
+    )
+
+    private given Decoder[LauncherEvidenceEntry] = deriveDecoder
+    private given Decoder[LauncherEvidenceSnapshot] = deriveDecoder
+
+    private def _launcher_evidence_path: Path =
+      Path.of(java.lang.System.getProperty("user.home"), ".cncf", "launcher", "server-evidence.json") // cncf-car-lint: ignore documented standalone provider/bootstrap host boundary locates Launcher-owned evidence.
+
+    private def _read_evidence(path: Path): Either[String, Vector[LauncherEvidenceEntry]] =
+      if (!Files.isRegularFile(path))
+        Left(RECOVERY_EVIDENCE_UNAVAILABLE)
+      else
+        Try(Files.readString(path, StandardCharsets.UTF_8)).toEither.left.map(_ => RECOVERY_EVIDENCE_UNAVAILABLE) // cncf-car-lint: ignore documented standalone provider/bootstrap host boundary reads Launcher-owned evidence.
+          .flatMap(text => decode[LauncherEvidenceSnapshot](text).left.map(_ => RECOVERY_EVIDENCE_UNAVAILABLE))
+          .filterOrElse(_.schema == _launcher_evidence_schema, RECOVERY_EVIDENCE_UNAVAILABLE)
+          .map(_.entries)
+
+    private def _select_evidence(
+      entries: Vector[LauncherEvidenceEntry],
+      profile: StandaloneLaunchProfile,
+      instanceid: String
+    ): Either[String, LauncherEvidenceEntry] = {
+      val exact = entries.filter(_.instanceId == instanceid)
+      if (exact.size == 1)
+        _validate_evidence_identity(exact.head, profile).map(_ => exact.head)
+      else if (exact.size > 1)
+        Left(RECOVERY_EVIDENCE_AMBIGUOUS)
+      else {
+        val candidates = entries.filter(entry => entry.stoppedAt.nonEmpty && _matches_profile(entry, profile))
+        candidates.lastOption.toRight(RECOVERY_EVIDENCE_MISMATCH)
+      }
+    }
+
+    private def _validate_evidence_identity(
+      entry: LauncherEvidenceEntry,
+      profile: StandaloneLaunchProfile
+    ): Either[String, Unit] =
+      Either.cond(_matches_profile(entry, profile), (), RECOVERY_EVIDENCE_MISMATCH)
+
+    private def _matches_profile(entry: LauncherEvidenceEntry, profile: StandaloneLaunchProfile): Boolean =
+      entry.artifactId.contains(profile.targetId) &&
+        (profile match {
+          case development: StandaloneDevelopmentLaunchProfile =>
+            entry.executionMode == "development" &&
+              entry.developmentDirectory.flatMap(value => Try(Path.of(value).toAbsolutePath.normalize).toOption).contains(development.developmentDirectory.toAbsolutePath.normalize)
+          case _: StandaloneRepositoryLaunchProfile => entry.executionMode == "repository"
+        })
+
+    private final class RecoveredSystemChild(
+      val instanceId: String,
+      val port: Option[Int],
+      root: ProcessHandle
+    ) extends StandaloneSupervisorChild {
+      private val _tracked = scala.collection.mutable.LinkedHashSet.empty[ProcessHandle]
+
+      _tracked += root
+      _refresh_descendants()
+      private val _capture_thread = {
+        val thread = new Thread(() => _capture_descendants(), "textus-supervisor-recovered-process-tree") // cncf-car-lint: ignore documented standalone provider/bootstrap host boundary owns recovered child-process observation.
+        thread.setDaemon(true)
+        thread.start()
+        thread
+      }
+
+      def isAlive: Boolean = {
+        _refresh_descendants()
+        _tracked.synchronized(_tracked.exists(_.isAlive))
+      }
+
+      def stop(): Boolean = {
+        _refresh_descendants()
+        val handles = _tracked.synchronized(_tracked.toVector)
+        _signal(handles, force = false)
+        _await_dead(handles, _shutdown_wait_millis)
+        _refresh_descendants()
+        val remaining = _tracked.synchronized(_tracked.toVector.filter(_.isAlive))
+        _signal(remaining, force = true)
+        _await_dead(remaining, _shutdown_wait_millis)
+        !isAlive
+      }
+
+      private def _refresh_descendants(): Unit =
+        _tracked.synchronized {
+          Try(root.descendants().iterator().asScala.foreach(_tracked += _))
+        }
+
+      private def _capture_descendants(): Unit = {
+        var running = true
+        while (running) {
+          _refresh_descendants()
+          running = root.isAlive
+          if (running) {
+            try Thread.sleep(_capture_poll_millis) // cncf-car-lint: ignore documented standalone provider/bootstrap host boundary polls recovered child-process ownership.
+            catch {
+              case _: InterruptedException =>
+                Thread.currentThread.interrupt()
+                running = false
+            }
+          }
+        }
+      }
+
+      private def _signal(handles: Vector[ProcessHandle], force: Boolean): Unit = {
+        val descendants = handles.filterNot(_ == root)
+        val ordered = descendants ++ handles.find(_ == root).toVector
+        ordered.filter(_.isAlive).foreach(handle => Try(if (force) handle.destroyForcibly() else handle.destroy()))
+      }
+
+      private def _await_dead(handles: Vector[ProcessHandle], timeoutmillis: Long): Unit = {
+        val deadline = java.lang.System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutmillis)
+        while (handles.exists(_.isAlive) && java.lang.System.nanoTime() < deadline) {
+          try Thread.sleep(_shutdown_poll_millis) // cncf-car-lint: ignore documented standalone provider/bootstrap host boundary waits for recovered child-process shutdown.
+          catch {
+            case _: InterruptedException =>
+              Thread.currentThread.interrupt()
+              return
+          }
+        }
+      }
+    }
 
     private final class SystemChild(
       val instanceId: String,
@@ -540,6 +670,26 @@ final case class StandaloneSupervisorSnapshot(
   ownedInstances: Map[String, String]
 )
 
+private sealed trait StandaloneOwnershipRecovery {
+  def snapshot: StandaloneSupervisorSnapshot
+}
+
+private final case class StandaloneOwnershipLive(
+  snapshot: StandaloneSupervisorSnapshot,
+  child: StandaloneSupervisorChild
+) extends StandaloneOwnershipRecovery
+
+private final case class StandaloneOwnershipCleared(
+  snapshot: StandaloneSupervisorSnapshot,
+  previous: Option[StandaloneSupervisorChild]
+) extends StandaloneOwnershipRecovery
+
+private final case class StandaloneOwnershipUnavailable(
+  snapshot: StandaloneSupervisorSnapshot,
+  instanceid: Option[String],
+  diagnosticcode: String
+) extends StandaloneOwnershipRecovery
+
 final class StandaloneSupervisorStateStore(path: Path, supervisorId: String) {
   import StandaloneSupervisorStateStore.*
   import StandaloneSupervisorStateStore.given
@@ -638,7 +788,7 @@ final class StandaloneTextusSupervisor(
           if (request.deadlineAt.isBefore(now))
             _persist(snapshot, request, _result(request, SupervisorState.TimedOut, Some("supervisor-request-timed-out"), None, now))
           else if (request.action == SupervisorAction.Stop)
-            _stop(snapshot, request, now)
+            _stop(snapshot, request, _profile(request).orElse(_owned_profile(snapshot, request)), now)
           else
             _profile(request) match {
               case None => _persist(snapshot, request, _result(request, SupervisorState.Rejected, Some(StandaloneDevelopmentLaunchProfile.PROFILE_UNAVAILABLE), None, now))
@@ -656,56 +806,88 @@ final class StandaloneTextusSupervisor(
   )(using context: ExecutionContext): SupervisorResult =
     request.action match {
       case SupervisorAction.Start =>
-        _children.get(request.targetId) match {
-          case Some(child) if child.isAlive =>
-            _persist(snapshot, request, _result(request, SupervisorState.Rejected, Some("supervisor-ownership-unavailable"), Some(child.instanceId), now))
-          case Some(child) =>
-            _children = _children.removed(request.targetId)
-            _start(snapshot.copy(ownedInstances = snapshot.ownedInstances.removed(request.targetId)), request, profile, Some(child), now)
-          case None if snapshot.ownedInstances.contains(request.targetId) =>
-            profile match {
-              case development: StandaloneDevelopmentLaunchProfile =>
-                processHost.preflight(development, None).fold(
-                  code => _persist(snapshot, request, _result(request, SupervisorState.Rejected, Some(code), snapshot.ownedInstances.get(request.targetId), now)),
-                  _ => _launch(snapshot.copy(ownedInstances = snapshot.ownedInstances.removed(request.targetId)), request, development, now)
-                )
-              case _: StandaloneRepositoryLaunchProfile =>
-                _persist(snapshot, request, _result(request, SupervisorState.Rejected, Some("supervisor-ownership-unavailable"), snapshot.ownedInstances.get(request.targetId), now))
-            }
-          case None =>
-            _start(snapshot, request, profile, None, now)
+        _reconcile_owned(snapshot, request.targetId, profile) match {
+          case StandaloneOwnershipLive(current, child) =>
+            _persist(current, request, _result(request, SupervisorState.Rejected, Some("supervisor-ownership-unavailable"), Some(child.instanceId), now))
+          case StandaloneOwnershipCleared(current, previous) =>
+            _start(current, request, profile, previous, now)
+          case StandaloneOwnershipUnavailable(current, instanceid, code) =>
+            _persist(current, request, _result(request, SupervisorState.Rejected, Some(code), instanceid, now))
         }
       case SupervisorAction.Stop =>
-        _stop(snapshot, request, now)
+        _stop(snapshot, request, Some(profile), now)
       case SupervisorAction.Restart =>
-        _children.get(request.targetId).filter(_.isAlive) match {
-          case Some(child) =>
+        _reconcile_owned(snapshot, request.targetId, profile) match {
+          case StandaloneOwnershipLive(current, child) =>
             processHost.preflight(profile, Some(child)).fold(
-              code => _persist(snapshot, request, _result(request, SupervisorState.Rejected, Some(code), Some(child.instanceId), now)),
+              code => _persist(current, request, _result(request, SupervisorState.Rejected, Some(code), Some(child.instanceId), now)),
               _ =>
                 if (!child.stop())
-                  _persist(snapshot, request, _result(request, SupervisorState.Rejected, Some(StandaloneSupervisorProcessHost.EXECUTION_UNAVAILABLE), Some(child.instanceId), now))
+                  _persist(current, request, _result(request, SupervisorState.Rejected, Some(StandaloneSupervisorProcessHost.EXECUTION_UNAVAILABLE), Some(child.instanceId), now))
                 else {
                   _children = _children.removed(request.targetId)
-                  _start(snapshot.copy(ownedInstances = snapshot.ownedInstances.removed(request.targetId)), request, profile, Some(child), now)
+                  _start(current.copy(ownedInstances = current.ownedInstances.removed(request.targetId)), request, profile, Some(child), now)
                 }
             )
-          case None =>
-            _persist(snapshot, request, _result(request, SupervisorState.Rejected, Some("supervisor-ownership-unavailable"), snapshot.ownedInstances.get(request.targetId), now))
+          case StandaloneOwnershipCleared(current, previous) =>
+            _start(current, request, profile, previous, now)
+          case StandaloneOwnershipUnavailable(current, instanceid, code) =>
+            _persist(current, request, _result(request, SupervisorState.Rejected, Some(code), instanceid, now))
         }
     }
 
   private def _stop(
     snapshot: StandaloneSupervisorSnapshot,
     request: SupervisorRequest,
+    profile: Option[StandaloneLaunchProfile],
     now: java.time.Instant
   ): SupervisorResult =
-    _children.get(request.targetId).filter(_.isAlive) match {
-      case Some(child) if child.stop() =>
-        _children = _children.removed(request.targetId)
-        _persist(snapshot.copy(ownedInstances = snapshot.ownedInstances.removed(request.targetId)), request, _result(request, SupervisorState.Stopped, None, Some(child.instanceId), now))
-      case _ =>
-        _persist(snapshot, request, _result(request, SupervisorState.Rejected, Some("supervisor-ownership-unavailable"), snapshot.ownedInstances.get(request.targetId), now))
+    profile match {
+      case Some(value) => _reconcile_owned(snapshot, request.targetId, value) match {
+        case StandaloneOwnershipLive(current, child) if child.stop() =>
+          _children = _children.removed(request.targetId)
+          _persist(current.copy(ownedInstances = current.ownedInstances.removed(request.targetId)), request, _result(request, SupervisorState.Stopped, None, Some(child.instanceId), now))
+        case StandaloneOwnershipCleared(current, _) =>
+          _persist(current, request, _result(request, SupervisorState.Stopped, None, snapshot.ownedInstances.get(request.targetId), now))
+        case StandaloneOwnershipUnavailable(current, instanceid, code) =>
+          _persist(current, request, _result(request, SupervisorState.Rejected, Some(code), instanceid, now))
+        case StandaloneOwnershipLive(current, child) =>
+          _persist(current, request, _result(request, SupervisorState.Rejected, Some(StandaloneSupervisorProcessHost.EXECUTION_UNAVAILABLE), Some(child.instanceId), now))
+      }
+      case None =>
+        _children.get(request.targetId).filter(_.isAlive) match {
+          case Some(child) if child.stop() =>
+            _children = _children.removed(request.targetId)
+            _persist(snapshot.copy(ownedInstances = snapshot.ownedInstances.removed(request.targetId)), request, _result(request, SupervisorState.Stopped, None, Some(child.instanceId), now))
+          case _ =>
+            _persist(snapshot, request, _result(request, SupervisorState.Rejected, Some("supervisor-ownership-unavailable"), snapshot.ownedInstances.get(request.targetId), now))
+        }
+    }
+
+  private def _reconcile_owned(
+    snapshot: StandaloneSupervisorSnapshot,
+    targetid: String,
+    profile: StandaloneLaunchProfile
+  ): StandaloneOwnershipRecovery =
+    _children.get(targetid) match {
+      case Some(child) if child.isAlive => StandaloneOwnershipLive(snapshot, child)
+      case Some(child) =>
+        _children = _children.removed(targetid)
+        StandaloneOwnershipCleared(snapshot.copy(ownedInstances = snapshot.ownedInstances.removed(targetid)), Some(child))
+      case None => snapshot.ownedInstances.get(targetid) match {
+        case None => StandaloneOwnershipCleared(snapshot, None)
+        case Some(instanceid) => processHost.recover(profile, instanceid) match {
+          case Right(Some(child)) if child.isAlive =>
+            _children = _children.updated(targetid, child)
+            StandaloneOwnershipLive(snapshot, child)
+          case Right(Some(_)) =>
+            StandaloneOwnershipUnavailable(snapshot, Some(instanceid), StandaloneSupervisorProcessHost.RECOVERY_EVIDENCE_UNSAFE)
+          case Right(None) =>
+            StandaloneOwnershipCleared(snapshot.copy(ownedInstances = snapshot.ownedInstances.removed(targetid)), None)
+          case Left(code) =>
+            StandaloneOwnershipUnavailable(snapshot, Some(instanceid), code)
+        }
+      }
     }
 
   private def _start(
@@ -772,6 +954,16 @@ final class StandaloneTextusSupervisor(
         _profiles.get(request.targetId -> deploymentid)
           .orElse(_repository_profiles.get(deploymentid).map(_.forTarget(request.targetId)))
       }
+
+  private def _owned_profile(
+    snapshot: StandaloneSupervisorSnapshot,
+    request: SupervisorRequest
+  ): Option[StandaloneLaunchProfile] =
+    snapshot.ownedInstances.get(request.targetId).flatMap { instanceid =>
+      snapshot.records.reverseIterator
+        .find(record => record.request.targetId == request.targetId && record.result.instanceId.contains(instanceid))
+        .flatMap(record => _profile(record.request))
+    }
 
   private def _persist(
     snapshot: StandaloneSupervisorSnapshot,

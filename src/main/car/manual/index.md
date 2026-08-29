@@ -39,9 +39,14 @@ timestamps.
 
 The provider records request and ownership state before lifecycle control.
 Repeating the same request ID and idempotency key returns the retained result
-and does not create another managed deployment. Unknown, corrupt, or stale
-ownership fails closed; ownership is never reconstructed from a PID, command
-line, or occupied port.
+and does not create another managed deployment. The standalone process host may
+use Launcher-owned local server evidence after an embedded Supervisor restart.
+A live child is recovered only when instance ID, artifact, execution mode,
+development directory, PID, and process start instant all match. Profile-only
+stopped evidence may clear stale ownership but never grants process-control
+authority. Unknown, corrupt, ambiguous, or mismatched evidence fails closed;
+PIDs, command lines, occupied ports, and evidence paths remain outside the
+public service contract.
 
 The standalone implementation's local process, host filesystem, readiness,
 and diagnostic handling are provider/bootstrap responsibilities. They are
