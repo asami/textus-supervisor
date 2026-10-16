@@ -89,7 +89,9 @@ lazy val cncfSourceSettings: Seq[Def.Setting[_]] = cncfSourceProject.toSeq.flatM
     cozyDelegateProjectDir := cozySourceDirectory,
     cozyDelegateCommand := Seq("cozy", "--runtime", cncfSourceCozyVersion),
     TaskKey[Option[File]]("cozyCncfRuntimeDescriptorInput") :=
-      Some((source / TaskKey[File]("generateCncfRuntimeDescriptor")).value)
+      Some((source / TaskKey[File]("generateCncfRuntimeDescriptor")).value),
+    TaskKey[Option[File]]("cozyCncfRuntimeArtifactInput") :=
+      Some((source / Compile / packageBin).value)
   )
 }
 
