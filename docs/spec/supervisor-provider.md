@@ -124,3 +124,126 @@ and durable idempotency (XP4), and reconstructed remote request evidence with
 unproven ownership rejected (XP5). Its recording process host replaces only
 the OS child boundary. These specifications do not stand in for canonical-child,
 packaged placement, panel, or complete Phase acceptance.
+
+## Canonical real-process Service acceptance
+
+The explicit forked, serial `canonicalProcess` configuration contains
+[CanonicalSupervisorProcessSpec](../../src/canonicalProcess/scala/org/simplemodeling/textus/supervisor/impl/CanonicalSupervisorProcessSpec.scala).
+Ordinary `Test` discovery and `Test/test` remain unchanged. The configuration
+uses the actual `Test/fullClasspath` for existing public context and HTTP
+runtime-admission fixtures and prepends `target/canonical-process/bin` to its
+forked PATH. Selected execution requires these absolute JVM properties:
+
+| Property | Required input |
+| --- | --- |
+| `textus.supervisor.canonical.launcher-classpath-file` | Actual current CNCF Launcher `Runtime / fullClasspath` export. |
+| `textus.supervisor.canonical.component-classpath-file` | Actual current Supervisor `Runtime / fullClasspath` export. |
+| `textus.supervisor.canonical.runtime-root` | Admitted CNCF source checkout with prepared `target/cncf.d/runtime-classpath.txt`. |
+| `textus.supervisor.canonical.component-root` | Actual admitted Supervisor development checkout. |
+
+Before selecting `canonicalProcess:testOnly
+org.simplemodeling.textus.supervisor.impl.CanonicalSupervisorProcessSpec`,
+prepare the CNCF runtime through its existing `cncfRuntimeClasspathFile` task
+and compile/export the selected Launcher. Create Supervisor's
+`target/canonical-process/tmp`, then run its existing `cozyPrepareRuntime` with
+the accepted CNCF, sbt-cozy, prepared Cozy and core source bindings and
+`-J-Djava.io.tmpdir=target/canonical-process/tmp` from the Supervisor checkout.
+Keep the relative spelling because SBT derives its boot socket path from this
+property; a long absolute checkout path can exceed the native Unix-domain
+socket limit. For this preparation and the following representative and
+accumulator commands, also supply
+`-J-Dswoval.tmpdir=<absolute Supervisor checkout>/target/canonical-process/tmp/swoval`,
+replacing `<absolute Supervisor checkout>` with the admitted absolute checkout
+path. macOS native monitoring library loading requires an absolute path to the
+extracted library. Both properties keep their outputs in the existing Supervisor
+`target/canonical-process/tmp` tree. Export its actual `Runtime / fullClasspath`
+afterward. This is normal native build
+preparation, without publication. The native bridge generates these existing
+inputs from the unchanged real `project.yaml` and source ABI:
+
+- `target/cncf.d/runtime-classpath.txt`;
+- `target/cncf.d/car-runtime-manifest.json`;
+- `target/cncf.d/component-descriptor.json`;
+- existing `src/main/car/abi-manifest.json`.
+
+Both exported and native component classpaths must contain the genuine
+own-target `org/simplemodeling/textus/supervisor/impl/ComponentFactory.class`.
+Missing, empty or invalid inputs and unavailable native process start metadata
+fail the selected specification with prerequisite diagnostics. Fixtures do not
+run builds, copy or symlink source/classes/ABI, create project descriptors,
+rewrite native evidence, manufacture manifests or implement integrity checks.
+Unchanged CNCF production admission consumes the native prepared contract.
+
+Each case explicitly registers the existing public typed
+`StandaloneDevelopmentLaunchProfile("textus-supervisor", componentRoot, port,
+developmentRepositoryDirectories = Vector(componentRoot))` using its own free
+positive port and the actual admitted checkout. This acceptance does not claim
+automatic descriptor or default-port discovery. Unique case work under
+`target/canonical-process/work/<unique>` contains its home, state, temporary
+directory, local data, normal runtime config and assembly descriptor. The
+assembly selects only canonical `org.simplemodeling.textus.Supervisor` version
+`0.1.1-SNAPSHOT` with a standalone local operator. The separate runtime config
+sets `textus.assembly.descriptor`, `textus.subsystem.file` and
+`textus.local-data.root` to case-owned paths.
+
+The serial wrapper executes the actual Java binary and exported Launcher
+classpath, supplies case-scoped JVM home/tmp plus normal `--launcher-home`,
+`--runtime-dev-dir` and `--cncf-config`, and forwards every original argument
+unchanged. The real System host constructs the target-first `cncf <actual
+checkout> server` command with the chosen port, opaque registration instance
+and explicit development repository. No synthetic runtime or child replaces
+this route. Parent fork-JVM `user.home` is scoped to the same case home for
+unchanged `System.recover` and restored afterward; HOME, shell profiles and
+global caches are unchanged.
+
+CP1 requires at least three successful generated complete real lifecycles with
+zero discarded cases for each of embedded and external placement: Start and
+retry, actual safe Launcher list and private native correlation, backend and
+consumer reconstruction, retained lookup/retry, Restart and retry, then Stop
+and retry. It observes the real TCP port and native child liveness, distinct
+replacement identity, and normal stopped evidence. CP2 holds a real conflicting
+socket and preserves the durable rejection after release. CP3 uses the shared
+administrative guard and each placement's existing expired-request taxonomy;
+neither attempt may launch or create Launcher evidence. CP4 deliberately throws
+a known primary exception after a genuine accepted Start in each placement.
+The same exception must escape fixture cleanup, failed case files must remain,
+and private evidence must show no live native invocation with the selected
+port released. All eight scenarios remain required; CP4 does not replace any
+of the three successful generated CP1 lifecycles per placement.
+
+Supervisor-generated instance IDs are opaque. Both canonical Launchers reuse
+the nonempty trimmed internal registration identity in their single evidence
+and registration report, without requiring UUID shape. The exact internal
+metadata option is withheld from runtime arguments. Empty or absent metadata
+retains the Launcher's fresh UUID behavior.
+
+Embedded entry uses the shared Service SPI. External entry uses the production
+provider, normal `UrlConnectionHttpDriver`/UoW, actual generated Operations and
+resource-managed `SupervisorHttpRouteFixture` with runtime admission and the
+real Service authenticator. It uses `PT30S` external bounds and positive
+90-second request deadlines, retaining the production 15-second readiness
+bound. Reconstruction closes and reopens HTTP resources around a new backend
+with the same durable state/profile.
+
+Finally, exact backend ownership/native evidence remains the recovery input
+for stopping case children. The fixture's process-host decorator delegates
+real System preflight, start and recover unchanged and records only actual
+child handles returned by System start for that case. Cleanup first attempts
+the existing exact-ID System recovery, then in a finally block attempts to
+stop every still-live originally acquired handle and checks every outcome,
+even if recovery or an earlier cleanup action fails. This case-local resource
+ownership never supplies a handle to production recover or replaces its
+evidence-based reconstruction. Standard resource handling preserves a primary
+scenario exception and suppresses secondary cleanup exceptions. CP1 failure
+diagnostics include the actual ScalaCheck status and case clue.
+
+HTTP listeners and sockets close, scoped home restores in the outer finally,
+and successful case work is deleted only after confirmed shutdown. Failure or
+uncertain cleanup retains case work and diagnostics. Shared checkout, compiled
+outputs, ABI, native manifests and classpath are never case-owned cleanup.
+There is no process scan or arbitrary PID signalling.
+
+This proves durable genuine-child recovery at the Service/process boundary.
+Restarted packaged Control Center/Supervisor JVMs, actual Web panel actions,
+both packaged deployment assemblies, Textus repository launch and complete
+Phase acceptance remain successor requirements.

@@ -4,6 +4,7 @@ import org.goldenport.cozy.CozyProjectConfig
 import sbt.Keys.*
 
 lazy val projectIdentityEvidence = settingKey[CozyProjectIdentityEvidence]("Admitted project.yaml component identity evidence")
+lazy val CanonicalProcess = config("canonicalProcess") extend Test
 
 def localSourceDirectory(environmentName: String, sourceMarker: String): Option[File] = {
   sys.env.get(environmentName).map { raw =>
@@ -94,6 +95,8 @@ lazy val cncfSourceSettings: Seq[Def.Setting[_]] = cncfSourceProject.toSeq.flatM
 
 lazy val root = project
   .in(file("."))
+  .configs(CanonicalProcess)
+  .settings(inConfig(CanonicalProcess)(Defaults.testSettings))
   .enablePlugins(org.goldenport.cozy.CozyPlugin)
   .dependsOn(cncfSourceProject.toSeq.map(source => source % "compile->compile"): _*)
   .settings(
@@ -146,3 +149,12 @@ lazy val root = project
     }.taskValue
   )
   .settings(cncfSourceSettings)
+  .settings(
+    CanonicalProcess / dependencyClasspath := (Test / fullClasspath).value,
+    CanonicalProcess / fork := true,
+    CanonicalProcess / parallelExecution := false,
+    CanonicalProcess / envVars += "PATH" -> (
+      (target.value / "canonical-process" / "bin").getAbsolutePath +
+        java.io.File.pathSeparator + sys.env.getOrElse("PATH", "")
+    )
+  )
