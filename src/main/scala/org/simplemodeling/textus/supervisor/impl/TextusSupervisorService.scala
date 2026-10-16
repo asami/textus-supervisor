@@ -1,12 +1,14 @@
 /*
  * @since   Jul. 28, 2026
- * @version Aug. 20, 2026
+ *  version Aug. 20, 2026
+ * @version Oct. 16, 2026
  * @author  ASAMI, Tomoharu
  */
 package org.simplemodeling.textus.supervisor.impl
 
 import org.goldenport.Consequence
-import org.goldenport.cncf.context.ExecutionContext
+import org.goldenport.cncf.context.{ExecutionContext, SecurityContext}
+import org.goldenport.cncf.security.SecuritySubject
 import org.goldenport.cncf.spi.supervisor.{
   Supervisor,
   SupervisorAction,
@@ -30,10 +32,26 @@ final class TextusSupervisorService(
   lifecycleSupervisor: Supervisor
 ) extends Supervisor {
   def submit(request: SupervisorRequest)(using ExecutionContext): Consequence[SupervisorResult] =
-    lifecycleSupervisor.submit(request)
+    _authorize.flatMap(_ => lifecycleSupervisor.submit(request))
 
   def lookup(requestId: String)(using ExecutionContext): Consequence[Option[SupervisorResult]] =
-    lifecycleSupervisor.lookup(requestId)
+    _authorize.flatMap(_ => lifecycleSupervisor.lookup(requestId))
+
+  private def _authorize(using context: ExecutionContext): Consequence[Unit] = {
+    val subject = SecuritySubject.current(using context)
+    val privileges = Vector(
+      SecurityContext.Privilege.ApplicationContentManager,
+      SecurityContext.Privilege.Operator,
+      SecurityContext.Privilege.System,
+      SecurityContext.Privilege.Internal
+    )
+    if (subject.isAuthenticated && privileges.exists(privilege =>
+      subject.hasPrivilege(privilege.name) ||
+        subject.hasCapability(privilege.name) ||
+        subject.hasRole(privilege.name)
+    )) Consequence.unit
+    else Consequence.securityPermissionDenied("Lifecycle control requires administrative authorization.")
+  }
 }
 
 object TextusSupervisorService {

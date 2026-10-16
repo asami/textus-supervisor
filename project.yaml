@@ -19,6 +19,7 @@ build:
       - "org.goldenport::goldenport-cncf:0.5.2"
     test:
       - "org.scalatest::scalatest:3.2.10"
+      - "org.scalacheck::scalacheck:1.17.1"
 
 publication:
   source_manifest:

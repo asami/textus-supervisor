@@ -1,5 +1,6 @@
 /*
- * @version Jul. 28, 2026
+ *  version Jul. 28, 2026
+ * @version Oct. 16, 2026
  */
 package org.simplemodeling.textus.supervisor.impl
 
@@ -19,7 +20,7 @@ final class TextusSupervisorProviderSpec extends AnyWordSpec with Matchers with 
       val lifecycle = new RecordingSupervisor
       val service = new TextusSupervisorService(lifecycle)
       val provider = new TextusSupervisorProvider(service)
-      given ExecutionContext = ExecutionContext.create()
+      given ExecutionContext = SupervisorServiceOperationFixture.administrativeContext()
 
       When("assembly installs the standard SPI and submits lifecycle work")
       val installed = provider.provide(SpiContract(Supervisor.CONTRACT_NAME, classOf[Supervisor]), SpiSelection()).toOption.get
@@ -34,7 +35,7 @@ final class TextusSupervisorProviderSpec extends AnyWordSpec with Matchers with 
     "publish the CNCF Supervisor contract and safely reject work without a driver" in {
       Given("the default Textus Supervisor provider")
       val provider = TextusSupervisorProvider()
-      given ExecutionContext = ExecutionContext.create()
+      given ExecutionContext = SupervisorServiceOperationFixture.administrativeContext()
 
       When("assembly requests the CNCF Supervisor contract")
       val supervisor = provider.provide(SpiContract(Supervisor.CONTRACT_NAME, classOf[Supervisor]), SpiSelection()).toOption.get
