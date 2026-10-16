@@ -1,6 +1,7 @@
 /*
  * @since   Jul. 28, 2026
- * @version Aug. 20, 2026
+ *  version Aug. 20, 2026
+ * @version Oct. 16, 2026
  */
 package org.simplemodeling.textus.supervisor.impl
 
@@ -8,6 +9,7 @@ import cats.syntax.all.*
 import org.goldenport.Consequence
 import org.goldenport.cncf.action.ActionCall
 import org.goldenport.cncf.component.{Component, ComponentCreate, ComponentId}
+import org.goldenport.cncf.security.AuthenticationProvider
 import org.goldenport.cncf.spi.{SpiProvider, SpiProviderComponent}
 import org.goldenport.cncf.unitofwork.ExecUowM
 import org.goldenport.protocol.operation.OperationResponse
@@ -44,16 +46,23 @@ abstract class TextusSupervisorParticipantFactoryBase extends TextusSupervisorCo
 }
 
 final class TextusSupervisorPrimaryComponent(
-  provider: TextusSupervisorProvider
+  provider: TextusSupervisorProvider,
+  serviceAuthenticationProviders: Vector[AuthenticationProvider] = Vector.empty
 ) extends TextusSupervisorComponent with SpiProviderComponent {
   def spiProviders: Vector[SpiProvider[?]] =
     Vector(provider)
+
+  override def authenticationProviders: Vector[AuthenticationProvider] =
+    serviceAuthenticationProviders
 }
 
 final class TextusSupervisorPrimaryFactory extends TextusSupervisorParticipantFactoryBase with Component.PrimaryComponentFactory {
   override protected def create_Component(params: ComponentCreate): Component = {
     val provider = configure_runtime(params).provider
-    new TextusSupervisorPrimaryComponent(provider)
+    new TextusSupervisorPrimaryComponent(
+      provider,
+      TextusSupervisorServiceAuthenticationProvider.fromConfiguration(params.configuration)
+    )
   }
 
   override protected def create_Core(

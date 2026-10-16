@@ -17,6 +17,8 @@ import org.goldenport.cncf.context.{Capability, DataStoreContext, EntityStoreCon
 import org.goldenport.cncf.datastore.{DataStore, DataStoreSpace}
 import org.goldenport.cncf.entity.EntityStoreSpace
 import org.goldenport.cncf.event.EventEngine
+import org.goldenport.cncf.http.HttpDriver
+import org.goldenport.cncf.security.AuthenticationProvider
 import org.goldenport.cncf.spi.{SpiContract, SpiSelection}
 import org.goldenport.cncf.spi.supervisor.{Supervisor, SupervisorAction, SupervisorRequest, SupervisorResult}
 import org.goldenport.cncf.subsystem.Subsystem
@@ -28,7 +30,9 @@ import org.simplemodeling.textus.supervisor.{TextusSupervisorComponent, value}
 
 final class SupervisorServiceOperationFixture private (
   val directory: Path,
-  val host: SupervisorServiceOperationFixture.RecordingProcessHost
+  val host: SupervisorServiceOperationFixture.RecordingProcessHost,
+  private val _authentication_providers: Vector[AuthenticationProvider],
+  private val _configuration: ResolvedConfiguration
 ) {
   val statePath: Path = directory.resolve("supervisor-state.json")
   private val _standalone = new StandaloneTextusSupervisor(statePath, host)
@@ -40,7 +44,7 @@ final class SupervisorServiceOperationFixture private (
   val provider = new TextusSupervisorProvider(service)
   private val _subsystem = Subsystem(
     name = "supervisor-service-operation-spec",
-    configuration = ResolvedConfiguration(Configuration.empty, ConfigurationTrace.empty)
+    configuration = _configuration
   )
   private val _factory = new ServiceParticipantFactory
   private val _participant = _factory.createPrimary(ComponentCreate(_subsystem, ComponentOrigin.Main))
@@ -49,6 +53,8 @@ final class SupervisorServiceOperationFixture private (
   private var _action_contexts = Vector.empty[ExecutionContext]
 
   def actionContexts: Vector[ExecutionContext] = _action_contexts
+
+  def subsystem: Subsystem = _subsystem
 
   def spi(using ExecutionContext): Supervisor =
     provider.provide(SpiContract(Supervisor.CONTRACT_NAME, classOf[Supervisor]), SpiSelection()).TAKE
@@ -85,7 +91,12 @@ final class SupervisorServiceOperationFixture private (
     }
 
   def reconstruct(): SupervisorServiceOperationFixture =
-    new SupervisorServiceOperationFixture(directory, new SupervisorServiceOperationFixture.RecordingProcessHost)
+    new SupervisorServiceOperationFixture(
+      directory,
+      new SupervisorServiceOperationFixture.RecordingProcessHost,
+      _authentication_providers,
+      _configuration
+    )
 
   def close(): Unit = {
     val paths = Files.walk(directory)
@@ -104,7 +115,7 @@ final class SupervisorServiceOperationFixture private (
       new DefaultSupervisorServiceFactory(() => Some(service))
 
     override protected def create_Component(params: ComponentCreate): Component =
-      new TextusSupervisorPrimaryComponent(provider)
+      new TextusSupervisorPrimaryComponent(provider, _authentication_providers)
 
     override protected def create_Core(params: ComponentCreate, comp: Component): Component.Core =
       component_core(TextusSupervisorComponent.name, TextusSupervisorComponent.componentId)
@@ -112,12 +123,20 @@ final class SupervisorServiceOperationFixture private (
 }
 
 object SupervisorServiceOperationFixture {
-  def withFixture[A](run: SupervisorServiceOperationFixture => A): A = {
+  def withFixture[A](run: SupervisorServiceOperationFixture => A): A =
+    withFixture(Vector.empty, ResolvedConfiguration(Configuration.empty, ConfigurationTrace.empty))(run)
+
+  def withFixture[A](
+    authenticationProviders: Vector[AuthenticationProvider],
+    configuration: ResolvedConfiguration
+  )(run: SupervisorServiceOperationFixture => A): A = {
     val base = Path.of("target", "test-work", "cc4-s3a").toAbsolutePath.normalize
     Files.createDirectories(base)
     val fixture = new SupervisorServiceOperationFixture(
       Files.createTempDirectory(base, "service-"),
-      new RecordingProcessHost
+      new RecordingProcessHost,
+      authenticationProviders,
+      configuration
     )
     try run(fixture)
     finally fixture.close()
@@ -131,7 +150,8 @@ object SupervisorServiceOperationFixture {
     privilege: Option[String] = Some(SecurityContext.Privilege.Operator.name),
     capability: Option[String] = None,
     role: Option[String] = None,
-    subjectKind: SubjectKind = SubjectKind.User
+    subjectKind: SubjectKind = SubjectKind.User,
+    httpDriver: Option[HttpDriver] = None
   ): ExecutionContext = {
     val base = ExecutionContext.create()
     val datastorespace = new DataStoreSpace().addDataStore(DataStore.inMemorySearchable())
@@ -140,6 +160,7 @@ object SupervisorServiceOperationFixture {
       "supervisor-service-operation-spec",
       None,
       base.observability,
+      httpdriveroption = httpDriver,
       datastore = Some(DataStoreContext(datastorespace)),
       entitystore = Some(EntityStoreContext(entitystorespace))
     )

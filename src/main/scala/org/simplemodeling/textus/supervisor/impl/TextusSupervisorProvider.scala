@@ -1,5 +1,6 @@
 /*
- * @version Jul. 28, 2026
+ * @since   Jul. 28, 2026
+ * @version Oct. 16, 2026
  */
 package org.simplemodeling.textus.supervisor.impl
 
@@ -44,8 +45,14 @@ object TextusSupervisorProvider {
   def configured(configuration: ResolvedConfiguration): TextusSupervisorProvider =
     configuredRuntime(configuration).provider
 
-  def configuredRuntime(configuration: ResolvedConfiguration): Runtime =
-    ConfigurationAccess.getString(configuration, StandaloneDevelopmentProfileRegistry.CONTROL_CENTER_HOME_KEY)
+  def configuredRuntime(configuration: ResolvedConfiguration): Runtime = {
+    if (ExternalSupervisorConfiguration.selected(configuration)) {
+      val backend = ExternalSupervisorConfiguration.fromConfiguration(configuration)
+        .map(settings => new ExternalTextusSupervisor(settings): Supervisor)
+        .getOrElse(ExternalUnavailable)
+      val service = new TextusSupervisorService(backend)
+      Runtime(service, new TextusSupervisorProvider(service))
+    } else ConfigurationAccess.getString(configuration, StandaloneDevelopmentProfileRegistry.CONTROL_CENTER_HOME_KEY)
       .map(_.trim)
       .filter(_.nonEmpty)
       .flatMap(value => scala.util.Try(java.nio.file.Path.of(value)).toOption)
@@ -60,6 +67,15 @@ object TextusSupervisorProvider {
         val service = new TextusSupervisorService(unconfigured)
         Runtime(service, new TextusSupervisorProvider(service))
       }
+  }
+
+  private object ExternalUnavailable extends Supervisor {
+    def submit(request: SupervisorRequest)(using ExecutionContext): Consequence[SupervisorResult] =
+      Consequence.serviceUnavailable("External Supervisor configuration is unavailable.")
+
+    def lookup(requestId: String)(using ExecutionContext): Consequence[Option[SupervisorResult]] =
+      Consequence.serviceUnavailable("External Supervisor configuration is unavailable.")
+  }
 
   val unconfigured: Supervisor = new Supervisor {
     def submit(request: SupervisorRequest)(using ExecutionContext): Consequence[SupervisorResult] =
