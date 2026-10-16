@@ -3,7 +3,6 @@
 Status: PLANNED
 Planned: 2026-10-16
 Consumer: textus-control-center Phase 8
-Upstream: goldenport-cncf Phase 113
 Related: textus-control-center Phase 4 lifecycle authority
 
 ## Goal
@@ -11,6 +10,9 @@ Related: textus-control-center Phase 4 lifecycle authority
 Make Textus Supervisor the lifecycle authority for CARs deployed in the Docker Compose operational profile while preserving the command/result and ownership contract established by Control Center Phase 4.
 
 ## Scope
+
+Before adding any CNCF runtime abstraction, validate the existing CAR/Launcher runtime path in Docker. If a concrete CNCF deficiency is found, record that deficiency and create a CNCF phase then; CNCF work is not a prerequisite by assumption.
+
 
 - Define the Supervisor execution-boundary/provider abstraction.
 - Implement the Docker execution provider.
